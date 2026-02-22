@@ -3,6 +3,7 @@ from fastapi import FastAPI
 from app.api.auth import router as auth_router
 from app.api.dashboard import router as dashboard_router
 from app.api.purchases import router as purchases_router
+from app.api.users import router as users_router
 from app.db.base import Base
 from app.db.session import engine
 from app.models.purchase import Purchase  # noqa: F401
@@ -19,6 +20,7 @@ def startup():
 app.include_router(auth_router)
 app.include_router(purchases_router)
 app.include_router(dashboard_router)
+app.include_router(users_router)
 
 
 @app.get("/health")
