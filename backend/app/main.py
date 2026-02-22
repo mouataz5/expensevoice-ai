@@ -4,7 +4,7 @@ from app.api.auth import router as auth_router
 from app.api.dashboard import router as dashboard_router
 from app.api.purchases import router as purchases_router
 from app.api.users import router as users_router
-from app.core.seed import seed_admin
+from app.core.seed import seed_admin, seed_director
 from app.db.base import Base
 from app.db.session import SessionLocal, engine
 from app.models.purchase import Purchase  # noqa: F401
@@ -20,6 +20,7 @@ def startup():
     db = SessionLocal()
     try:
         seed_admin(db)
+        seed_director(db)
     finally:
         db.close()
 
