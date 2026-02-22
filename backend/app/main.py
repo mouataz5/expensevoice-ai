@@ -4,8 +4,9 @@ from app.api.auth import router as auth_router
 from app.api.dashboard import router as dashboard_router
 from app.api.purchases import router as purchases_router
 from app.api.users import router as users_router
+from app.core.seed import seed_admin
 from app.db.base import Base
-from app.db.session import engine
+from app.db.session import SessionLocal, engine
 from app.models.purchase import Purchase  # noqa: F401
 from app.models.user import User  # noqa: F401
 
@@ -15,6 +16,12 @@ app = FastAPI(title="ExpenseVoice AI API")
 @app.on_event("startup")
 def startup():
     Base.metadata.create_all(bind=engine)
+
+    db = SessionLocal()
+    try:
+        seed_admin(db)
+    finally:
+        db.close()
 
 
 app.include_router(auth_router)
