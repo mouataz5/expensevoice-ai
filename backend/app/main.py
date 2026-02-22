@@ -1,15 +1,22 @@
 from fastapi import FastAPI
 
+from app.api.auth import router as auth_router
+from app.api.purchases import router as purchases_router
 from app.db.base import Base
 from app.db.session import engine
+from app.models.purchase import Purchase  # noqa: F401
 from app.models.user import User  # noqa: F401
 
-app = FastAPI(title="ExpenseVoice AI API", version="0.1.0")
+app = FastAPI(title="ExpenseVoice AI API")
 
 
 @app.on_event("startup")
-def on_startup():
+def startup():
     Base.metadata.create_all(bind=engine)
+
+
+app.include_router(auth_router)
+app.include_router(purchases_router)
 
 
 @app.get("/health")

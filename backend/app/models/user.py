@@ -11,11 +11,22 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
     )
+
     email: Mapped[str] = mapped_column(
-        String(255), unique=True, index=True, nullable=False
+        String(255),
+        unique=True,
+        index=True,
+        nullable=False,
     )
+
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+
     role: Mapped[str] = mapped_column(
-        String(50), nullable=False, default="employee"
+        String(50),
+        nullable=False,
+        default="employee",  # employee / director / admin
     )
