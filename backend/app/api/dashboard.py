@@ -83,15 +83,28 @@ def get_stats(
             ),
             func.count(Purchase.id).label("count"),
         )
+        .select_from(Purchase)
         .where(Purchase.created_at >= start_month)
         .group_by(Purchase.user_id)
         .order_by(func.coalesce(func.sum(Purchase.total_amount), 0).desc())
         .limit(10)
     ).all()
 
+    # Map user_id -> email for display
+    user_ids = [r[0] for r in top_user_rows]
+    users_map = {}
+    if user_ids:
+        users_list = db.execute(
+            select(User.id, User.email).where(User.id.in_(user_ids))
+        ).all()
+        users_map = {str(u[0]): u[1] for u in users_list}
+
     top_users = [
         UserStat(
-            user_id=str(r[0]), total_amount=float(r[1]), count=int(r[2])
+            user_id=str(r[0]),
+            email=users_map.get(str(r[0])),
+            total_amount=float(r[1]),
+            count=int(r[2]),
         )
         for r in top_user_rows
     ]

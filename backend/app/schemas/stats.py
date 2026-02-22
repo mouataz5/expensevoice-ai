@@ -11,6 +11,7 @@ class CategoryStat(BaseModel):
 
 class UserStat(BaseModel):
     user_id: str
+    email: Optional[str] = None  # mapped from User for display
     total_amount: float
     count: int
 
