@@ -3,7 +3,12 @@ import os
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.policy_defaults import (
+    get_default_categories_policy,
+    get_default_limits_policy,
+)
 from app.core.security import hash_password
+from app.models.policy import Policy
 from app.models.user import User
 
 
@@ -40,3 +45,33 @@ def seed_director(db: Session):
 
     if email and password:
         seed_user_if_not_exists(db, email, password, role)
+
+
+def seed_policies(db: Session):
+    existing_limits = db.execute(
+        select(Policy).where(Policy.policy_type == "limits")
+    ).scalar_one_or_none()
+
+    if not existing_limits:
+        db.add(
+            Policy(
+                policy_type="limits",
+                rule=get_default_limits_policy(),
+                is_active=True,
+            )
+        )
+        db.commit()
+
+    existing_categories = db.execute(
+        select(Policy).where(Policy.policy_type == "categories")
+    ).scalar_one_or_none()
+
+    if not existing_categories:
+        db.add(
+            Policy(
+                policy_type="categories",
+                rule=get_default_categories_policy(),
+                is_active=True,
+            )
+        )
+        db.commit()
