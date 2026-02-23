@@ -4,6 +4,7 @@ from app.api.alerts import router as alerts_router
 from app.api.auth import router as auth_router
 from app.api.confirm import router as confirm_router
 from app.api.dashboard import router as dashboard_router
+from app.api.policies import router as policies_router
 from app.api.extract import router as extract_router
 from app.api.purchases import router as purchases_router
 from app.api.users import router as users_router
@@ -39,6 +40,7 @@ app.include_router(extract_router)
 app.include_router(confirm_router)
 app.include_router(dashboard_router)
 app.include_router(alerts_router)
+app.include_router(policies_router)
 app.include_router(users_router)
 
 
