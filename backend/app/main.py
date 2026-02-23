@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.alerts import router as alerts_router
 from app.api.auth import router as auth_router
@@ -19,6 +20,14 @@ from app.models.purchase import Purchase  # noqa: F401
 from app.models.user import User  # noqa: F401
 
 app = FastAPI(title="ExpenseVoice AI API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.on_event("startup")
