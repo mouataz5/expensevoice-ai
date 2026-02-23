@@ -26,3 +26,11 @@ class PurchaseOut(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class PurchaseConfirm(BaseModel):
+    product_name: str
+    category: Optional[str] = None
+    quantity: int = Field(ge=1)
+    unit_price: float = Field(ge=0)
+    total_amount: float = Field(ge=0)
