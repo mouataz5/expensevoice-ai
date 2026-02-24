@@ -1,6 +1,6 @@
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import Date, cast, func, select
 from sqlalchemy.orm import Session
 
@@ -22,12 +22,28 @@ router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 def get_stats(
     db: Session = Depends(get_db),
     _user: User = require_roles("director", "admin"),
+    from_date: date | None = Query(default=None, alias="from"),
+    to_date: date | None = Query(default=None, alias="to"),
 ):
     now = datetime.now(timezone.utc)
-    start_today = datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
-    start_month = datetime(now.year, now.month, 1, tzinfo=timezone.utc)
 
-    # Totals + counts (today)
+    # Default range: current month -> today
+    if not from_date:
+        from_date = date(now.year, now.month, 1)
+    if not to_date:
+        to_date = date(now.year, now.month, now.day)
+
+    # Convert to UTC datetimes (inclusive range)
+    start_dt = datetime(
+        from_date.year, from_date.month, from_date.day, tzinfo=timezone.utc
+    )
+    end_dt = datetime(
+        to_date.year, to_date.month, to_date.day, tzinfo=timezone.utc
+    ) + timedelta(days=1)
+
+    start_today = datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
+
+    # Today metrics
     total_today = db.execute(
         select(func.coalesce(func.sum(Purchase.total_amount), 0))
         .select_from(Purchase)
@@ -40,20 +56,26 @@ def get_stats(
         .where(Purchase.created_at >= start_today)
     ).scalar_one()
 
-    # Totals + counts (month)
-    total_month = db.execute(
+    # Range totals
+    total_range = db.execute(
         select(func.coalesce(func.sum(Purchase.total_amount), 0))
         .select_from(Purchase)
-        .where(Purchase.created_at >= start_month)
+        .where(
+            Purchase.created_at >= start_dt,
+            Purchase.created_at < end_dt,
+        )
     ).scalar_one()
 
-    count_month = db.execute(
+    count_range = db.execute(
         select(func.count(Purchase.id))
         .select_from(Purchase)
-        .where(Purchase.created_at >= start_month)
+        .where(
+            Purchase.created_at >= start_dt,
+            Purchase.created_at < end_dt,
+        )
     ).scalar_one()
 
-    # By category (month)
+    # By category (range)
     by_category_rows = db.execute(
         select(
             Purchase.category,
@@ -62,7 +84,11 @@ def get_stats(
             ),
             func.count(Purchase.id).label("count"),
         )
-        .where(Purchase.created_at >= start_month)
+        .select_from(Purchase)
+        .where(
+            Purchase.created_at >= start_dt,
+            Purchase.created_at < end_dt,
+        )
         .group_by(Purchase.category)
         .order_by(func.coalesce(func.sum(Purchase.total_amount), 0).desc())
     ).all()
@@ -74,7 +100,7 @@ def get_stats(
         for r in by_category_rows
     ]
 
-    # Top users (month)
+    # Top users (range)
     top_user_rows = db.execute(
         select(
             Purchase.user_id,
@@ -84,13 +110,15 @@ def get_stats(
             func.count(Purchase.id).label("count"),
         )
         .select_from(Purchase)
-        .where(Purchase.created_at >= start_month)
+        .where(
+            Purchase.created_at >= start_dt,
+            Purchase.created_at < end_dt,
+        )
         .group_by(Purchase.user_id)
         .order_by(func.coalesce(func.sum(Purchase.total_amount), 0).desc())
         .limit(10)
     ).all()
 
-    # Map user_id -> email for display
     user_ids = [r[0] for r in top_user_rows]
     users_map = {}
     if user_ids:
@@ -109,9 +137,7 @@ def get_stats(
         for r in top_user_rows
     ]
 
-    # Daily trend last 14 days
-    start_14 = start_today - timedelta(days=13)
-
+    # Daily trend for the selected range
     daily_rows = db.execute(
         select(
             cast(Purchase.created_at, Date).label("day"),
@@ -121,7 +147,10 @@ def get_stats(
             func.count(Purchase.id).label("count"),
         )
         .select_from(Purchase)
-        .where(Purchase.created_at >= start_14)
+        .where(
+            Purchase.created_at >= start_dt,
+            Purchase.created_at < end_dt,
+        )
         .group_by(cast(Purchase.created_at, Date))
         .order_by(cast(Purchase.created_at, Date).asc())
     ).all()
@@ -135,9 +164,9 @@ def get_stats(
 
     return DashboardStats(
         total_amount_today=float(total_today),
-        total_amount_month=float(total_month),
+        total_amount_month=float(total_range),
         purchases_today=int(count_today),
-        purchases_month=int(count_month),
+        purchases_month=int(count_range),
         by_category=by_category,
         top_users=top_users,
         daily_trend_last_14_days=daily_trend,

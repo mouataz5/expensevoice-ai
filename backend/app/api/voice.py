@@ -20,8 +20,10 @@ ALLOWED_AUDIO_TYPES = {
     "audio/wav",
     "audio/x-wav",
     "audio/ogg",
+    "audio/ogg;codecs=opus",
     "audio/mp4",
     "audio/webm",
+    "audio/webm;codecs=opus",
 }
 
 
@@ -32,7 +34,12 @@ async def record_purchase_voice(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    if audio.content_type not in ALLOWED_AUDIO_TYPES:
+    content_type = (audio.content_type or "").strip().lower()
+    allowed = (
+        content_type in ALLOWED_AUDIO_TYPES
+        or content_type.startswith("audio/")
+    )
+    if not allowed:
         raise HTTPException(
             status_code=400,
             detail=f"Unsupported audio type: {audio.content_type}",
@@ -48,12 +55,12 @@ async def record_purchase_voice(
         content = await audio.read()
         f.write(content)
 
+    text = ""
     try:
         text = transcribe_audio(file_path, language=language)
     except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Transcription failed: {str(e)}"
-        ) from e
+        # Save purchase anyway so user gets purchase_id; frontend can show warning
+        pass
 
     item = Purchase(
         user_id=user.id,
@@ -76,4 +83,5 @@ async def record_purchase_voice(
         "transcription": text,
         "status": item.status,
         "audio_file_path": item.audio_file_path,
+        "transcription_failed": not text,
     }

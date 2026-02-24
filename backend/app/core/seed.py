@@ -30,8 +30,8 @@ def seed_user_if_not_exists(db: Session, email: str, password: str, role: str):
 
 
 def seed_admin(db: Session):
-    email = os.getenv("SEED_ADMIN_EMAIL")
-    password = os.getenv("SEED_ADMIN_PASSWORD")
+    email = os.getenv("SEED_ADMIN_EMAIL", "admin@company.com")
+    password = os.getenv("SEED_ADMIN_PASSWORD", "Admin12345!")
     role = os.getenv("SEED_ADMIN_ROLE", "admin")
 
     if email and password:
@@ -39,9 +39,18 @@ def seed_admin(db: Session):
 
 
 def seed_director(db: Session):
-    email = os.getenv("SEED_DIRECTOR_EMAIL")
-    password = os.getenv("SEED_DIRECTOR_PASSWORD")
+    email = os.getenv("SEED_DIRECTOR_EMAIL", "director@company.com")
+    password = os.getenv("SEED_DIRECTOR_PASSWORD", "Director12345!")
     role = os.getenv("SEED_DIRECTOR_ROLE", "director")
+
+    if email and password:
+        seed_user_if_not_exists(db, email, password, role)
+
+
+def seed_employee(db: Session):
+    email = os.getenv("SEED_EMPLOYEE_EMAIL", "employee@company.com")
+    password = os.getenv("SEED_EMPLOYEE_PASSWORD", "Employee12345!")
+    role = os.getenv("SEED_EMPLOYEE_ROLE", "employee")
 
     if email and password:
         seed_user_if_not_exists(db, email, password, role)
