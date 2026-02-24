@@ -1,6 +1,10 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchPolicies, updatePolicy } from "../api/policies";
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
 
 export default function Policies() {
   const qc = useQueryClient();
@@ -48,112 +52,119 @@ export default function Policies() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["policies"] }),
   });
 
-  if (q.isLoading) return <div>Loading policies...</div>;
+  if (q.isLoading) return <div className="text-sm text-muted-foreground">Loading policies...</div>;
   if (q.isError)
-    return <div>Error loading policies (admin only)</div>;
+    return <div className="text-sm text-destructive">Error loading policies (admin only)</div>;
 
   return (
-    <div style={{ padding: 16, fontFamily: "system-ui" }}>
-      <h2>Policies (Admin)</h2>
+    <div className="space-y-6">
+      <div>
+        <div className="text-2xl font-semibold">Policies (Admin)</div>
+        <div className="text-sm text-muted-foreground">Limits and allowed categories</div>
+      </div>
 
-      <section
-        style={{
-          border: "1px solid #ddd",
-          borderRadius: 10,
-          padding: 12,
-          marginBottom: 16,
-        }}
-      >
-        <h3>Limits</h3>
-        <label>max_per_purchase</label>
-        <input
-          type="number"
-          value={limits.max_per_purchase}
-          onChange={(e) =>
-            setLimits({
-              ...limits,
-              max_per_purchase: Number(e.target.value),
-            })
-          }
-        />
-        <br />
-        <label>daily_limit_default</label>
-        <input
-          type="number"
-          value={limits.daily_limit_default}
-          onChange={(e) =>
-            setLimits({
-              ...limits,
-              daily_limit_default: Number(e.target.value),
-            })
-          }
-        />
-        <br />
-        <label>
-          <input
-            type="checkbox"
-            checked={activeLimits}
-            onChange={(e) => setActiveLimits(e.target.checked)}
-          />
-          Active
-        </label>
-        <br />
-        <button
-          onClick={() =>
-            m.mutate({
-              type: "limits",
-              rule: limits,
-              active: activeLimits,
-            })
-          }
-          disabled={m.isPending}
-        >
-          Save Limits
-        </button>
-      </section>
+      <Card className="rounded-2xl">
+        <CardContent className="p-5 space-y-4">
+          <div className="flex items-center gap-2">
+            <h3 className="font-medium">Limits</h3>
+            <Badge variant={activeLimits ? "default" : "secondary"}>
+              {activeLimits ? "Active" : "Inactive"}
+            </Badge>
+          </div>
+          <div className="grid gap-3 max-w-xs">
+            <label className="text-sm text-muted-foreground">max_per_purchase</label>
+            <Input
+              type="number"
+              value={limits.max_per_purchase}
+              onChange={(e) =>
+                setLimits({
+                  ...limits,
+                  max_per_purchase: Number(e.target.value),
+                })
+              }
+            />
+            <label className="text-sm text-muted-foreground">daily_limit_default</label>
+            <Input
+              type="number"
+              value={limits.daily_limit_default}
+              onChange={(e) =>
+                setLimits({
+                  ...limits,
+                  daily_limit_default: Number(e.target.value),
+                })
+              }
+            />
+          </div>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={activeLimits}
+              onChange={(e) => setActiveLimits(e.target.checked)}
+              className="rounded border-input"
+            />
+            Active
+          </label>
+          <Button
+            onClick={() =>
+              m.mutate({
+                type: "limits",
+                rule: limits,
+                active: activeLimits,
+              })
+            }
+            disabled={m.isPending}
+          >
+            Save Limits
+          </Button>
+        </CardContent>
+      </Card>
 
-      <section
-        style={{
-          border: "1px solid #ddd",
-          borderRadius: 10,
-          padding: 12,
-        }}
-      >
-        <h3>Categories</h3>
-        <label>allowed (comma-separated)</label>
-        <input
-          value={categories}
-          onChange={(e) => setCategories(e.target.value)}
-          style={{ width: "100%" }}
-        />
-        <br />
-        <label>
-          <input
-            type="checkbox"
-            checked={activeCategories}
-            onChange={(e) => setActiveCategories(e.target.checked)}
-          />
-          Active
-        </label>
-        <br />
-        <button
-          onClick={() =>
-            m.mutate({
-              type: "categories",
-              rule: {
-                allowed: categories
-                  .split(",")
-                  .map((s) => s.trim())
-                  .filter(Boolean),
-              },
-              active: activeCategories,
-            })
-          }
-          disabled={m.isPending}
-        >
-          Save Categories
-        </button>
-      </section>
+      <Card className="rounded-2xl">
+        <CardContent className="p-5 space-y-4">
+          <div className="flex items-center gap-2">
+            <h3 className="font-medium">Categories</h3>
+            <Badge variant={activeCategories ? "default" : "secondary"}>
+              {activeCategories ? "Active" : "Inactive"}
+            </Badge>
+          </div>
+          <div>
+            <label className="text-sm text-muted-foreground block mb-2">
+              allowed (comma-separated)
+            </label>
+            <Input
+              value={categories}
+              onChange={(e) => setCategories(e.target.value)}
+              className="w-full"
+            />
+          </div>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={activeCategories}
+              onChange={(e) => setActiveCategories(e.target.checked)}
+              className="rounded border-input"
+            />
+            Active
+          </label>
+          <Button
+            onClick={() =>
+              m.mutate({
+                type: "categories",
+                rule: {
+                  allowed: categories
+                    .split(",")
+                    .map((s) => s.trim())
+                    .filter(Boolean),
+                },
+                active: activeCategories,
+              })
+            }
+            disabled={m.isPending}
+          >
+            Save Categories
+          </Button>
+        </CardContent>
+      </Card>
     </div>
   );
 }

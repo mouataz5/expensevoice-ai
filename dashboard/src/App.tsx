@@ -1,71 +1,27 @@
-import { Link, Route, Routes } from "react-router-dom";
+import { Route, Routes } from "react-router-dom";
 import Login from "./pages/Login";
 import Stats from "./pages/Stats";
 import Alerts from "./pages/Alerts";
 import Policies from "./pages/Policies";
 import { RequireAuth } from "./auth/RequireAuth";
-import { useAuth } from "./auth/AuthContext";
+import Layout from "./components/Layout";
+
+function Protected({ children }: { children: JSX.Element }) {
+  return (
+    <RequireAuth>
+      <Layout>{children}</Layout>
+    </RequireAuth>
+  );
+}
 
 export default function App() {
-  const { token, logout } = useAuth();
-
   return (
-    <div>
-      <nav
-        style={{
-          padding: 12,
-          borderBottom: "1px solid #ddd",
-          display: "flex",
-          gap: 12,
-        }}
-      >
-        <Link to="/stats">Stats</Link>
-        <Link to="/alerts">Alerts</Link>
-        <Link to="/policies">Policies</Link>
-        <div style={{ marginLeft: "auto" }}>
-          {token ? (
-            <button onClick={logout}>Logout</button>
-          ) : (
-            <Link to="/login">Login</Link>
-          )}
-        </div>
-      </nav>
-
-      <Routes>
-        <Route path="/login" element={<Login />} />
-        <Route
-          path="/stats"
-          element={
-            <RequireAuth>
-              <Stats />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/alerts"
-          element={
-            <RequireAuth>
-              <Alerts />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/policies"
-          element={
-            <RequireAuth>
-              <Policies />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="*"
-          element={
-            <RequireAuth>
-              <Stats />
-            </RequireAuth>
-          }
-        />
-      </Routes>
-    </div>
+    <Routes>
+      <Route path="/login" element={<Login />} />
+      <Route path="/stats" element={<Protected><Stats /></Protected>} />
+      <Route path="/alerts" element={<Protected><Alerts /></Protected>} />
+      <Route path="/policies" element={<Protected><Policies /></Protected>} />
+      <Route path="*" element={<Protected><Stats /></Protected>} />
+    </Routes>
   );
 }
