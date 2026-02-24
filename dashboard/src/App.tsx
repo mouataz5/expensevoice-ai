@@ -6,6 +6,8 @@ import Policies from "./pages/Policies";
 import EmployeeRecord from "./pages/EmployeeRecord";
 import EmployeePurchases from "./pages/EmployeePurchases";
 import EmployeeAlerts from "./pages/EmployeeAlerts";
+import PurchaseDetails from "./pages/PurchaseDetails";
+import Audit from "./pages/Audit";
 import { RequireAuth } from "./auth/RequireAuth";
 import Layout from "./components/Layout";
 
@@ -27,6 +29,8 @@ export default function App() {
       <Route path="/employee/record" element={<Protected><EmployeeRecord /></Protected>} />
       <Route path="/employee/purchases" element={<Protected><EmployeePurchases /></Protected>} />
       <Route path="/employee/alerts" element={<Protected><EmployeeAlerts /></Protected>} />
+      <Route path="/purchases/:id" element={<Protected><PurchaseDetails /></Protected>} />
+      <Route path="/audit" element={<Protected><Audit /></Protected>} />
       <Route path="*" element={<Protected><Stats /></Protected>} />
     </Routes>
   );

@@ -9,6 +9,7 @@
   "nav": {
     "stats": "الإحصائيات",
     "alerts": "التنبيهات",
+    "audit": "سجل النشاط",
     "record": "تسجيل صوت",
     "myPurchases": "عمليّاتي",
     "myAlerts": "تنبيهاتي",
@@ -129,6 +130,8 @@
     "loadError": "تعذّر تحميل العمليات",
     "status": "الحالة",
     "noPurchases": "لا توجد عمليات بعد",
+    "details": "تفاصيل",
+    "view": "عرض",
     "myAlertsTitle": "تنبيهاتي",
     "myAlertsSubtitle": "تنبيهات مرتبطة بعمليّاتي",
     "alertsLoadError": "تعذّر تحميل التنبيهات",

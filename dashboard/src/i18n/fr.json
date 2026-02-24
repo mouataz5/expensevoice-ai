@@ -9,6 +9,7 @@
   "nav": {
     "stats": "Statistiques",
     "alerts": "Alertes",
+    "audit": "Journal d'activité",
     "record": "Enregistrer voix",
     "myPurchases": "Mes opérations",
     "myAlerts": "Mes alertes",
@@ -129,6 +130,8 @@
     "loadError": "Impossible de charger les opérations",
     "status": "Statut",
     "noPurchases": "Aucune opération pour l'instant",
+    "details": "Détails",
+    "view": "Voir",
     "myAlertsTitle": "Mes alertes",
     "myAlertsSubtitle": "Alertes liées à mes opérations",
     "alertsLoadError": "Impossible de charger les alertes",

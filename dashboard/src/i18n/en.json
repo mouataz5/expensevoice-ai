@@ -9,6 +9,7 @@
   "nav": {
     "stats": "Stats",
     "alerts": "Alerts",
+    "audit": "Activity log",
     "record": "Record voice",
     "myPurchases": "My purchases",
     "myAlerts": "My alerts",
@@ -129,6 +130,8 @@
     "loadError": "Failed to load purchases",
     "status": "Status",
     "noPurchases": "No purchases yet",
+    "details": "Details",
+    "view": "View",
     "myAlertsTitle": "My alerts",
     "myAlertsSubtitle": "Alerts linked to my operations",
     "alertsLoadError": "Failed to load alerts",

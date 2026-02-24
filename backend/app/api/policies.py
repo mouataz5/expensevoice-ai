@@ -12,6 +12,7 @@ from app.schemas.policy import (
     PolicyOut,
     PolicyUpdate,
 )
+from app.services.audit import audit_log
 
 router = APIRouter(prefix="/api/admin/policies", tags=["policies-admin"])
 
@@ -73,4 +74,19 @@ def update_policy(
     db.add(p)
     db.commit()
     db.refresh(p)
+
+    audit_log(
+        db,
+        user=_user,
+        action="policy_update",
+        entity_type="policy",
+        entity_id=str(p.id),
+        message=f"Policy '{policy_type}' updated",
+        metadata={
+            "policy_type": policy_type,
+            "is_active": p.is_active,
+            "rule": p.rule,
+        },
+    )
+
     return p

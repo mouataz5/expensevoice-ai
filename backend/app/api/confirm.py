@@ -9,6 +9,7 @@ from app.db.deps import get_db
 from app.models.purchase import Purchase
 from app.models.user import User
 from app.schemas.purchase import PurchaseConfirm
+from app.services.audit import audit_log
 from app.services.rules import evaluate_rules_and_create_alerts
 
 router = APIRouter(prefix="/api/purchases", tags=["confirm"])
@@ -41,6 +42,20 @@ def confirm_purchase(
     db.add(purchase)
     db.commit()
     db.refresh(purchase)
+
+    audit_log(
+        db,
+        user=user,
+        action="purchase_confirm",
+        entity_type="purchase",
+        entity_id=str(purchase.id),
+        message="Purchase confirmed",
+        metadata={
+            "total_amount": float(purchase.total_amount),
+            "category": purchase.category,
+            "product_name": purchase.product_name,
+        },
+    )
 
     alerts = evaluate_rules_and_create_alerts(db, purchase)
 

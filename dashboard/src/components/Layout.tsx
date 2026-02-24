@@ -11,6 +11,7 @@ import { fetchMe } from "../api/me";
 const navBase = [
   { to: "/stats", labelKey: "nav.stats" as const },
   { to: "/alerts", labelKey: "nav.alerts" as const },
+  { to: "/audit", labelKey: "nav.audit" as const },
 ];
 
 const navEmployee = [

@@ -10,6 +10,7 @@ from app.models.alert import Alert
 from app.models.purchase import Purchase
 from app.models.user import User
 from app.schemas.alert import AlertOut
+from app.services.audit import audit_log
 
 router = APIRouter(prefix="/api/alerts", tags=["alerts"])
 
@@ -70,4 +71,18 @@ def resolve_alert(
     alert.status = "resolved"
     db.add(alert)
     db.commit()
+
+    audit_log(
+        db,
+        user=_user,
+        action="alert_resolve",
+        entity_type="alert",
+        entity_id=str(alert.id),
+        message="Alert resolved",
+        metadata={
+            "purchase_id": str(alert.purchase_id),
+            "alert_type": alert.alert_type,
+        },
+    )
+
     return {"alert_id": str(alert.id), "status": alert.status}

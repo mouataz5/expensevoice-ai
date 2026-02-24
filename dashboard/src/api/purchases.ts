@@ -18,6 +18,16 @@ export async function listMyPurchases(): Promise<PurchaseOut[]> {
   return res.data;
 }
 
+export async function getPurchase(id: string) {
+  const res = await api.get(`/api/purchases/${id}`);
+  return res.data;
+}
+
+export async function fetchPurchaseAlerts(id: string) {
+  const res = await api.get(`/api/purchases/${id}/alerts`);
+  return res.data;
+}
+
 export async function uploadVoice(audio: File, language?: string) {
   const fd = new FormData();
   fd.append("audio", audio);

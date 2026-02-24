@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import { Link } from "react-router-dom";
 import { listMyPurchases } from "../api/purchases";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -52,6 +53,7 @@ export default function EmployeePurchases() {
                   <TableHead>{t("employee.quantity")}</TableHead>
                   <TableHead>{t("employee.unitPrice")}</TableHead>
                   <TableHead>{t("employee.total")}</TableHead>
+                  <TableHead>{t("employee.details")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -67,12 +69,17 @@ export default function EmployeePurchases() {
                     <TableCell>{p.quantity}</TableCell>
                     <TableCell>{p.unit_price}</TableCell>
                     <TableCell>{p.total_amount}</TableCell>
+                    <TableCell>
+                      <Link className="underline text-sm" to={`/purchases/${p.id}`}>
+                        {t("employee.view")}
+                      </Link>
+                    </TableCell>
                   </TableRow>
                 ))}
                 {q.data.length === 0 && (
                   <TableRow>
                     <TableCell
-                      colSpan={6}
+                      colSpan={7}
                       className="text-center text-muted-foreground"
                     >
                       {t("employee.noPurchases")}

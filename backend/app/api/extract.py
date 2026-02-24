@@ -8,6 +8,7 @@ from app.core.dependencies import get_current_user
 from app.db.deps import get_db
 from app.models.purchase import Purchase
 from app.models.user import User
+from app.services.audit import audit_log
 from app.services.llm_extract import extract_purchase_fields
 
 router = APIRouter(prefix="/api/purchases", tags=["llm-extraction"])
@@ -47,6 +48,19 @@ async def extract_from_transcription(
     db.add(purchase)
     db.commit()
     db.refresh(purchase)
+
+    audit_log(
+        db,
+        user=user,
+        action="purchase_extract",
+        entity_type="purchase",
+        entity_id=str(purchase.id),
+        message="Purchase fields extracted from transcription",
+        metadata={
+            "confidence": getattr(extracted, "confidence", None),
+            "category": extracted.category,
+        },
+    )
 
     return {
         "purchase_id": str(purchase.id),
