@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { fetchAlerts, resolveAlert } from "../api/alerts";
+import { downloadFile } from "../api/download";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -164,6 +165,20 @@ export default function Alerts() {
                 <div className="text-sm text-muted-foreground">
                   {filtered.length} {t("alerts.results")}
                 </div>
+                <Button
+                  variant="outline"
+                  className="rounded-xl"
+                  onClick={() => downloadFile("/api/export/alerts.csv", "alerts.csv")}
+                >
+                  تنزيل CSV
+                </Button>
+                <Button
+                  variant="outline"
+                  className="rounded-xl"
+                  onClick={() => downloadFile("/api/export/alerts.pdf", "alerts.pdf")}
+                >
+                  تنزيل PDF
+                </Button>
               </div>
 
               <Table>

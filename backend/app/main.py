@@ -2,7 +2,11 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.audit import router as audit_router
+from app.api.audit_export import router as audit_export_router
+from app.api.audit_pdf import router as audit_pdf_router
 from app.api.alerts import router as alerts_router
+from app.api.alerts_export import router as alerts_export_router
+from app.api.alerts_pdf import router as alerts_pdf_router
 from app.core.dependencies import get_current_user
 from app.api.auth import router as auth_router
 from app.api.confirm import router as confirm_router
@@ -60,7 +64,11 @@ app.include_router(extract_router)
 app.include_router(confirm_router)
 app.include_router(dashboard_router)
 app.include_router(alerts_router)
+app.include_router(alerts_export_router)
+app.include_router(alerts_pdf_router)
 app.include_router(audit_router)
+app.include_router(audit_export_router)
+app.include_router(audit_pdf_router)
 app.include_router(policies_router)
 app.include_router(policies_public_router)
 app.include_router(policies_read_router)

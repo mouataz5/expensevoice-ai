@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { fetchAudit } from "../api/audit";
+import { downloadFile } from "../api/download";
 import { fetchUsersMap } from "../api/users";
 
 import { Card, CardContent } from "@/components/ui/card";
@@ -126,6 +127,20 @@ export default function Audit() {
             <div className="text-sm text-muted-foreground ms-auto">
               {filtered.length} حدث
             </div>
+            <Button
+              variant="outline"
+              className="rounded-xl"
+              onClick={() => downloadFile("/api/export/audit.csv", "audit.csv")}
+            >
+              تنزيل CSV
+            </Button>
+            <Button
+              variant="outline"
+              className="rounded-xl"
+              onClick={() => downloadFile("/api/export/audit.pdf", "audit.pdf")}
+            >
+              تنزيل PDF
+            </Button>
           </div>
 
           {auditQ.isLoading && (

@@ -9,3 +9,4 @@ email-validator
 python-multipart
 faster-whisper
 httpx>=0.27
+reportlab
