@@ -7,6 +7,11 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { useAuth } from "../auth/AuthContext";
 import { fetchMe } from "../api/me";
+import { NotificationCenter } from "./NotificationCenter";
+import { cn } from "@/lib/utils";
+
+const BRAND_TITLE = "نظام عبّاس لإدارة الضيعة";
+const BRAND_SUBTITLE_KEY = "common.dashboard" as const;
 
 const navBase = [
   { to: "/stats", labelKey: "nav.stats" as const },
@@ -16,6 +21,7 @@ const navBase = [
 
 const navEmployee = [
   { to: "/employee/record", labelKey: "nav.record" as const },
+  { to: "/employee/scan-invoice", labelKey: "nav.scanInvoice" as const },
   { to: "/employee/purchases", labelKey: "nav.myPurchases" as const },
   { to: "/employee/alerts", labelKey: "nav.myAlerts" as const },
 ];
@@ -28,6 +34,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const { t, i18n } = useTranslation();
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
+
+  useEffect(() => {
+    document.documentElement.dir = i18n.language === "ar" ? "rtl" : "ltr";
+    document.documentElement.lang = i18n.language;
+  }, [i18n.language]);
 
   const meQ = useQuery({ queryKey: ["me"], queryFn: fetchMe, enabled: !!token });
   const role = meQ.data?.role;
@@ -43,30 +54,41 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       ? navEmployee.map((n) => ({ ...n, label: t(n.labelKey) }))
       : [
           ...navBase,
+          ...(role === "director" || role === "admin"
+            ? [
+                { to: "/invoices" as const, labelKey: "nav.invoiceReview" as const },
+                { to: "/settings" as const, labelKey: "nav.settings" as const },
+              ]
+            : []),
           ...(role === "admin"
-            ? [{ to: "/policies" as const, labelKey: "nav.policies" as const }]
+            ? [
+                { to: "/policies" as const, labelKey: "nav.policies" as const },
+                { to: "/users" as const, labelKey: "nav.users" as const },
+              ]
             : []),
         ].map((n) => ({ ...n, label: t(n.labelKey) }));
 
   return (
     <div className="min-h-screen bg-background">
       <div className="flex">
-        {/* Sidebar */}
-        <aside className="hidden md:flex md:w-64 md:flex-col border-r min-h-screen p-4">
-          <div className="text-xl font-semibold">ExpenseVoice</div>
-          <div className="text-sm text-muted-foreground mb-4">{t("common.dashboard")}</div>
+        {/* Sidebar: distinct surface, dynamic link backgrounds */}
+        <aside className="hidden md:flex md:w-64 md:flex-col border-r border-border bg-card min-h-screen p-4 shadow-sm">
+          <div className="text-xl font-semibold text-primary">{BRAND_TITLE}</div>
+          <div className="text-sm text-muted-foreground mb-4">{t(BRAND_SUBTITLE_KEY)}</div>
           <Separator className="my-3" />
-          <nav className="flex flex-col gap-2">
-            {nav.map((n) => {
+          <nav className="flex flex-col gap-1">
+            {nav.map((n, index) => {
               const active = pathname.startsWith(n.to);
+              const accentIndex = (index % 6) + 1;
               return (
                 <Link
                   key={n.to}
                   to={n.to}
-                  className={[
-                    "rounded-xl px-3 py-2 text-sm",
-                    active ? "bg-muted font-medium" : "hover:bg-muted/60",
-                  ].join(" ")}
+                  className={cn(
+                    "sidebar-nav-link",
+                    active && "active",
+                    active && `nav-accent-${accentIndex}`
+                  )}
                 >
                   {n.label}
                 </Link>
@@ -75,7 +97,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           </nav>
           <div className="mt-auto pt-4">
             {token && (
-              <Button variant="outline" className="w-full" onClick={logout}>
+              <Button variant="outline" className="w-full rounded-xl" onClick={logout}>
                 {t("nav.logout")}
               </Button>
             )}
@@ -83,12 +105,15 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         </aside>
 
         {/* Main */}
-        <main className="flex-1">
-          {/* Topbar */}
-          <header className="sticky top-0 z-10 bg-background/80 backdrop-blur border-b">
+        <main className="flex-1 flex flex-col min-h-screen">
+          {/* Topbar: clear hierarchy, subtle gradient */}
+          <header className="sticky top-0 z-10 bg-card/95 backdrop-blur-md border-b border-border shadow-sm">
             <div className="h-14 px-4 flex items-center justify-between">
-              <div className="md:hidden font-semibold">ExpenseVoice</div>
+              <div className="md:hidden font-semibold text-primary">{BRAND_TITLE}</div>
               <div className="flex items-center gap-2">
+                {role === "director" || role === "admin" ? (
+                  <NotificationCenter />
+                ) : null}
                 <Button
                   variant="outline"
                   size="sm"
@@ -123,7 +148,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             </div>
           </header>
 
-          <div className="p-4 md:p-6 max-w-6xl mx-auto">{children}</div>
+          <div className="flex-1 content-area p-6 md:p-8 max-w-6xl w-full mx-auto min-h-0">
+            {children}
+          </div>
         </main>
       </div>
     </div>

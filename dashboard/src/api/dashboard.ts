@@ -31,6 +31,6 @@ export async function fetchStats(
   if (from) params.from = from;
   if (to) params.to = to;
 
-  const res = await api.get("/api/dashboard/stats", { params });
+  const res = await api.get("/dashboard/stats", { params });
   return res.data;
 }

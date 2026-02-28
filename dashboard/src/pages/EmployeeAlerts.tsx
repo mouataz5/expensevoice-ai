@@ -3,7 +3,10 @@ import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Button } from "@/components/ui/button";
+import { PageHeader } from "@/components/PageHeader";
+import { EmptyState } from "@/components/EmptyState";
+import { SkeletonCard } from "@/components/SkeletonCard";
 
 type AlertOut = {
   id: string;
@@ -15,64 +18,54 @@ type AlertOut = {
 };
 
 async function fetchMyAlerts(): Promise<AlertOut[]> {
-  const res = await api.get("/api/alerts/me");
+  const res = await api.get("/alerts/me");
   return res.data;
 }
 
 export default function EmployeeAlerts() {
   const { t } = useTranslation();
-  const q = useQuery({ queryKey: ["my-alerts"], queryFn: fetchMyAlerts });
+  const q = useQuery({ queryKey: ["my-alerts"], queryFn: fetchMyAlerts, retry: 2 });
+
+  function severityVariant(sev: string): "destructive" | "warning" | "info" | "secondary" {
+    const s = (sev ?? "").toLowerCase();
+    if (s === "critical") return "destructive";
+    if (s === "warning") return "warning";
+    if (s === "info") return "info";
+    return "secondary";
+  }
 
   return (
     <div className="space-y-6">
-      <div>
-        <div className="text-2xl font-semibold">
-          {t("employee.myAlertsTitle")}
-        </div>
-        <div className="text-sm text-muted-foreground">
-          {t("employee.myAlertsSubtitle")}
-        </div>
-      </div>
+      <PageHeader title={t("employee.myAlertsTitle")} subtitle={t("employee.myAlertsSubtitle")} />
 
-      <Card className="rounded-2xl">
+      <Card>
         <CardContent className="p-5 space-y-3">
-          {q.isLoading && (
-            <div className="space-y-3">
-              <Skeleton className="h-6 w-32" />
-              <Skeleton className="h-20 w-full rounded-xl" />
-              <Skeleton className="h-20 w-full rounded-xl" />
-            </div>
-          )}
+          {q.isLoading && <SkeletonCard lines={4} />}
           {q.isError && (
-            <div className="text-sm text-destructive">
-              {t("employee.alertsLoadError")}
-            </div>
+            <EmptyState
+              title={t("employee.alertsLoadError")}
+              action={<Button variant="outline" className="rounded-xl" onClick={() => q.refetch()}>{t("common.retry")}</Button>}
+            />
           )}
 
-          {q.data?.length === 0 && !q.isLoading && (
-            <div className="text-sm text-muted-foreground">
-              {t("employee.noAlerts")}
-            </div>
+          {q.data?.length === 0 && !q.isLoading && !q.isError && (
+            <EmptyState title={t("employee.noAlerts")} description={t("employee.myAlertsSubtitle")} />
           )}
 
-          {q.data?.map((a) => (
-            <div key={a.id} className="border rounded-xl p-3">
+          {q.data && q.data.length > 0 && q.data.map((a) => (
+            <div key={a?.id ?? ""} className="border border-border rounded-2xl p-4 hover:bg-primary/5 transition-colors">
               <div className="flex items-center justify-between">
-                <div className="font-medium">{a.alert_type}</div>
-                <Badge
-                  variant={
-                    a.severity === "critical" ? "destructive" : "secondary"
-                  }
-                >
-                  {a.severity}
+                <div className="font-medium">{a?.alert_type ?? "—"}</div>
+                <Badge variant={severityVariant(a?.severity ?? "")}>
+                  {a?.severity ?? "—"}
                 </Badge>
               </div>
               <div className="text-sm text-muted-foreground mt-1">
-                {a.message}
+                {a?.message ?? "—"}
               </div>
               <div className="text-xs text-muted-foreground mt-2">
-                {a.status} •{" "}
-                {new Date(a.created_at).toLocaleString()}
+                {a?.status ?? "—"} •{" "}
+                {a?.created_at ? new Date(a.created_at).toLocaleString() : "—"}
               </div>
             </div>
           ))}

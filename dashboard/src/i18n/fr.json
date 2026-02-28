@@ -4,16 +4,119 @@
     "view_subtitle": "Interface Directeur / Admin",
     "view_subtitle_employee": "Interface Employé",
     "theme_light": "Clair",
-    "theme_dark": "Sombre"
+    "theme_dark": "Sombre",
+    "retry": "Réessayer",
+    "cancel": "Annuler"
+  },
+  "site": {
+    "brand": "Abes AgroTech",
+    "nav": {
+      "home": "Accueil",
+      "about": "À propos",
+      "services": "Services",
+      "contact": "Contact",
+      "login": "Connexion"
+    },
+    "hero": {
+      "title": "Plateforme intelligente pour suivre ventes, dépenses et factures",
+      "subtitle": "Saisie vocale, scan factures, alertes et rapports PDF/CSV — adaptée aux entreprises.",
+      "ctaStart": "Commencer",
+      "ctaDemo": "Demander une démo"
+    },
+    "features": {
+      "title": "Fonctionnalités",
+      "subtitle": "Tout pour une gestion financière intelligente",
+      "f1": "Saisie vocale (Derja/AR/FR)",
+      "f2": "Scan facture → Rapport PDF",
+      "f3": "Alertes et limites (politiques)",
+      "f4": "Audit et traçabilité",
+      "f5": "Exports PDF/CSV",
+      "f6": "Tableaux de bord (stats)"
+    },
+    "how": {
+      "title": "Comment ça marche",
+      "step1": "Enregistrer (voix/photo)",
+      "step2": "Extraction automatique",
+      "step3": "Validation admin + rapports"
+    },
+    "trust": { "title": "Sécurité, traçabilité, performance" },
+    "cta": {
+      "title": "Prêt à commencer ?",
+      "subtitle": "Rejoignez la plateforme Abes AgroTech",
+      "btn": "Commencer"
+    },
+    "footer": {
+      "desc": "Plateforme intelligente pour la gestion des ventes, dépenses et opérations agricoles.",
+      "links": "Liens rapides",
+      "contact": "Contact",
+      "copyright": "Tous droits réservés"
+    },
+    "about": {
+      "title": "À propos",
+      "mission": "Notre mission",
+      "missionText": "Permettre aux entreprises agricoles de suivre ventes et dépenses avec simplicité et transparence.",
+      "vision": "Notre vision",
+      "visionText": "Être le partenaire technique de référence du secteur agricole en Tunisie.",
+      "values": "Nos valeurs",
+      "valuesTitle": "Pourquoi Abes AgroTech",
+      "valuesText": "Nous comprenons les besoins des agriculteurs et des entreprises. Une plateforme simple et puissante, adaptée au contexte tunisien."
+    },
+    "services": {
+      "title": "Services",
+      "subtitle": "Des solutions pensées pour votre secteur",
+      "s1": "Capture vocale achats/ventes",
+      "s1d": "Saisie à la voix (derja, arabe, français) avec extraction automatique des données.",
+      "s2": "Scan facture et rapport PDF",
+      "s2d": "Envoi de l'image de la facture et réception d'un rapport PDF bilingue.",
+      "s3": "Politiques et alertes",
+      "s3d": "Limites de montants, catégories autorisées, alertes en temps réel.",
+      "s4": "Journal d'audit",
+      "s4d": "Traçabilité complète de toutes les actions et validations.",
+      "s5": "Tableaux de bord analytiques",
+      "s5d": "Indicateurs, graphiques et export PDF/CSV.",
+      "s6": "Interface multilingue",
+      "s6d": "Arabe et français avec support RTL complet."
+    },
+    "contact": {
+      "title": "Contact",
+      "subtitle": "Nous sommes là pour vous aider",
+      "name": "Nom",
+      "email": "Email",
+      "message": "Message",
+      "send": "Envoyer",
+      "sendSuccess": "Votre message a été envoyé. Nous vous recontacterons bientôt.",
+      "placeholderName": "Votre nom",
+      "placeholderEmail": "vous@exemple.com",
+      "placeholderMessage": "Votre message...",
+      "whatsapp": "WhatsApp",
+      "emailLabel": "Email"
+    },
+    "auth": {
+      "login": "Connexion",
+      "register": "Créer un compte",
+      "forgotPassword": "Mot de passe oublié ?",
+      "backToSite": "Retour au site",
+      "email": "Email",
+      "password": "Mot de passe",
+      "confirmPassword": "Confirmer le mot de passe",
+      "signIn": "Se connecter",
+      "signUp": "Créer un compte",
+      "noAccount": "Pas encore de compte ?",
+      "hasAccount": "Déjà un compte ?"
+    }
   },
   "nav": {
     "stats": "Statistiques",
     "alerts": "Alertes",
     "audit": "Journal d'activité",
     "record": "Enregistrer voix",
+    "scanInvoice": "Scanner facture",
+    "invoiceReview": "Factures en attente",
     "myPurchases": "Mes opérations",
     "myAlerts": "Mes alertes",
     "policies": "Politiques",
+    "users": "Utilisateurs",
+    "settings": "Paramètres",
     "logout": "Déconnexion"
   },
   "login": {
@@ -78,7 +181,8 @@
     "page": "Page",
     "of": "sur",
     "resolved_ok": "Alerte résolue",
-    "resolved_fail": "Échec lors de la résolution"
+    "resolved_fail": "Échec lors de la résolution",
+    "clear_filters": "Effacer les filtres"
   },
   "policies": {
     "title": "Politiques",
@@ -99,6 +203,59 @@
     "saving": "Enregistrement...",
     "saved": "Politiques enregistrées",
     "saveFail": "Échec d'enregistrement"
+  },
+  "users": {
+    "title": "Gestion des utilisateurs",
+    "subtitle": "Ajouter et modifier les utilisateurs et rôles",
+    "addUser": "Ajouter un utilisateur",
+    "email": "Email",
+    "password": "Mot de passe",
+    "role": "Rôle",
+    "status": "Statut",
+    "actions": "Actions",
+    "active": "Actif",
+    "disabled": "Désactivé",
+    "resetPassword": "Réinitialiser le mot de passe",
+    "newPassword": "Nouveau mot de passe",
+    "reset": "Réinitialiser",
+    "create": "Créer",
+    "creating": "Création...",
+    "created": "Utilisateur créé",
+    "createFail": "Échec de création",
+    "updated": "Mis à jour",
+    "updateFail": "Échec de mise à jour",
+    "passwordReset": "Mot de passe réinitialisé",
+    "resetFail": "Échec de réinitialisation",
+    "loadError": "Impossible de charger les utilisateurs",
+    "noUsers": "Aucun utilisateur pour l'instant"
+  },
+  "settings": {
+    "title": "Paramètres",
+    "subtitle": "Nom de l'entreprise, devise, logo, limites par défaut, jours ouvrés",
+    "companyName": "Nom de l'entreprise",
+    "currency": "Devise",
+    "logoUrl": "URL du logo",
+    "logoUrlHint": "Entrez l'URL de l'image du logo",
+    "defaultLimits": "Limites par défaut",
+    "maxPerPurchase": "Max par achat",
+    "dailyLimitDefault": "Limite quotidienne par défaut",
+    "workingDays": "Jours ouvrés",
+    "days": {
+      "mon": "Lun",
+      "tue": "Mar",
+      "wed": "Mer",
+      "thu": "Jeu",
+      "fri": "Ven",
+      "sat": "Sam",
+      "sun": "Dim"
+    },
+    "save": "Enregistrer",
+    "saving": "Enregistrement...",
+    "saved": "Paramètres enregistrés",
+    "saveFail": "Échec de l'enregistrement",
+    "adminOnly": "Seul l'admin peut modifier les paramètres",
+    "viewOnly": "Lecture seule — l'enregistrement est réservé à l'admin.",
+    "loadError": "Impossible de charger les paramètres"
   },
   "employee": {
     "recordTitle": "Enregistrer un achat à la voix",
@@ -135,6 +292,12 @@
     "myAlertsTitle": "Mes alertes",
     "myAlertsSubtitle": "Alertes liées à mes opérations",
     "alertsLoadError": "Impossible de charger les alertes",
-    "noAlerts": "Aucune alerte 🎉"
+    "noAlerts": "Aucune alerte 🎉",
+    "searchPurchases": "Rechercher dans les opérations...",
+    "filter_all": "Tous",
+    "filter_pending": "En attente",
+    "filter_approved": "Approuvé",
+    "results": "résultats",
+    "noPurchasesFilter": "Aucune opération ne correspond au filtre"
   }
 }

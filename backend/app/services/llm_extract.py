@@ -123,9 +123,7 @@ async def extract_with_openai(transcription: str) -> ExtractedPurchase:
 
 
 async def extract_purchase_fields(transcription: str) -> ExtractedPurchase:
-    prov = _provider()
-    if prov == "ollama":
-        return await extract_with_ollama(transcription)
-    if prov == "openai":
-        return await extract_with_openai(transcription)
-    raise RuntimeError(f"Unknown LLM_PROVIDER: {prov}")
+    """Backward compatibility: delegate to extraction service (no transaction_type)."""
+    from app.services.extraction import extract_purchase_fields as _extract
+
+    return await _extract(transcription, transaction_type=None)

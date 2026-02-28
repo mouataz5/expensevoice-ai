@@ -16,6 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { PageHeader } from "@/components/PageHeader";
 import {
   Table,
   TableBody,
@@ -31,9 +32,10 @@ function badgeVariant(status: string) {
   return "secondary";
 }
 
-function sevVariant(sev: string): "destructive" | "secondary" | "outline" {
+function sevVariant(sev: string): "destructive" | "warning" | "info" | "secondary" | "outline" {
   if (sev === "critical") return "destructive";
-  if (sev === "warning") return "secondary";
+  if (sev === "warning") return "warning";
+  if (sev === "info") return "info";
   return "outline";
 }
 
@@ -157,17 +159,13 @@ export default function PurchaseDetails() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div>
-          <div className="text-2xl font-semibold">تفاصيل العملية</div>
-          <div className="text-sm text-muted-foreground">
-            رقم العملية: <b>{p.id}</b>
-          </div>
-        </div>
-        <Badge variant={badgeVariant(p.status)}>{p.status}</Badge>
-      </div>
+      <PageHeader
+        title="تفاصيل العملية"
+        subtitle={`رقم العملية: ${p.id}`}
+        actions={<Badge variant={badgeVariant(p.status)}>{p.status}</Badge>}
+      />
 
-      <Card className="rounded-2xl">
+      <Card>
         <CardContent className="p-5 space-y-3">
           <div className="font-medium">النص المستخرج (Transcription)</div>
           {p.transcription ? (
@@ -204,7 +202,7 @@ export default function PurchaseDetails() {
         </CardContent>
       </Card>
 
-      <Card className="rounded-2xl">
+      <Card>
         <CardContent className="p-5 space-y-4">
           <div className="font-medium">البيانات</div>
 
@@ -279,7 +277,7 @@ export default function PurchaseDetails() {
         </CardContent>
       </Card>
 
-      <Card className="rounded-2xl">
+      <Card>
         <CardContent className="p-5 space-y-3">
           <div className="font-medium">التنبيهات المرتبطة</div>
 

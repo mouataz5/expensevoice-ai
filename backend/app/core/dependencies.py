@@ -43,7 +43,7 @@ def get_current_user(
         ) from e
 
     user = db.execute(
-        select(User).where(User.id == user_id)
+        select(User).where(User.id == user_id, User.is_deleted == False)
     ).scalar_one_or_none()
 
     if not user:

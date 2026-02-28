@@ -8,7 +8,7 @@ export type Policy = {
 };
 
 export async function fetchPolicies(): Promise<Policy[]> {
-  const res = await api.get("/api/admin/policies");
+  const res = await api.get("/admin/policies");
   return res.data;
 }
 
@@ -17,7 +17,7 @@ export async function updatePolicy(
   rule: Record<string, unknown>,
   is_active?: boolean
 ) {
-  const res = await api.put(`/api/admin/policies/${policyType}`, {
+  const res = await api.put(`/admin/policies/${policyType}`, {
     rule,
     is_active,
   });

@@ -33,3 +33,4 @@ class Alert(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=datetime.utcnow
     )
+    is_deleted: Mapped[bool] = mapped_column(default=False, nullable=False)

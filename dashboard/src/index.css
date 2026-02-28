@@ -2,43 +2,138 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ==========================================================================
+   Agriculture SaaS — Premium design tokens
+   Stable, trustworthy, enterprise-ready. No bright or childish greens.
+   ========================================================================== */
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
+    /* Core surfaces */
+    --background: 85 14% 96%;
+    --foreground: 165 15% 14%;
     --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
-    --primary: 222.2 47.4% 11.2%;
-    --primary-foreground: 210 40% 98%;
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
-    --destructive: 0 84.2% 60.2%;
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 222.2 84% 4.9%;
-    --radius: 0.5rem;
+    --card-foreground: 165 15% 14%;
+
+    /* Primary: deep forest green — stable, trustworthy */
+    --primary: 158 44% 22%;
+    --primary-foreground: 0 0% 100%;
+
+    /* Secondary: warm neutral for subtle UI */
+    --secondary: 85 14% 92%;
+    --secondary-foreground: 165 15% 22%;
+
+    /* Muted: backgrounds and secondary text */
+    --muted: 85 12% 93%;
+    --muted-foreground: 168 10% 42%;
+
+    /* Accent: sage green — CTAs and highlights (not loud) */
+    --accent: 152 28% 36%;
+    --accent-foreground: 0 0% 100%;
+
+    /* Semantic */
+    --success: 158 42% 28%;
+    --success-foreground: 0 0% 100%;
+    --destructive: 0 52% 38%;
+    --destructive-foreground: 0 0% 100%;
+    --warning: 40 85% 40%;
+    --warning-foreground: 0 0% 100%;
+
+    /* Borders & inputs */
+    --border: 85 14% 88%;
+    --input: 85 14% 88%;
+    --ring: 158 44% 22%;
+
+    /* Radius */
+    --radius: 0.75rem;
+    --radius-lg: 1rem;
+
+    /* Layered background: gradient + radial highlight (very low opacity brand) */
+    --surface-gradient-start: 85 18% 97%;
+    --surface-gradient-end: 85 14% 94%;
+    --surface-radial-tint: 158 44% 22%;
+    --surface-radial-opacity: 0.028;
+
+    /* Card elevation: subtle border tint so cards stand out */
+    --card-border: 85 12% 86%;
+    --card-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.04), 0 1px 2px -1px rgb(0 0 0 / 0.04);
+
+    /* Chart palette: cohesive, muted, accessible */
+    --chart-1: 158 44% 28%;
+    --chart-2: 152 28% 40%;
+    --chart-3: 40 70% 45%;
+    --chart-4: 168 18% 38%;
+    --chart-5: 175 35% 35%;
+
+    /* Dynamic nav link accents — each link has its own professional tint */
+    --nav-1-bg: 158 44% 22% / 0.09;
+    --nav-1-bar: 158 44% 28%;
+    --nav-2-bg: 152 28% 36% / 0.09;
+    --nav-2-bar: 152 28% 42%;
+    --nav-3-bg: 168 18% 38% / 0.09;
+    --nav-3-bar: 168 18% 45%;
+    --nav-4-bg: 40 70% 45% / 0.08;
+    --nav-4-bar: 40 70% 50%;
+    --nav-5-bg: 175 35% 35% / 0.09;
+    --nav-5-bar: 175 35% 42%;
+    --nav-6-bg: 158 30% 32% / 0.09;
+    --nav-6-bar: 158 30% 38%;
   }
+
   .dark {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
-    --card: 222.2 84% 4.9%;
-    --card-foreground: 210 40% 98%;
-    --primary: 210 40% 98%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 212.7 26.8% 83.9%;
+    --background: 165 18% 9%;
+    --foreground: 85 14% 96%;
+    --card: 165 18% 12%;
+    --card-foreground: 85 14% 96%;
+
+    --primary: 152 35% 42%;
+    --primary-foreground: 165 18% 9%;
+
+    --secondary: 165 16% 18%;
+    --secondary-foreground: 85 14% 90%;
+
+    --muted: 165 16% 18%;
+    --muted-foreground: 168 10% 58%;
+
+    --accent: 152 28% 40%;
+    --accent-foreground: 0 0% 100%;
+
+    --success: 158 42% 35%;
+    --success-foreground: 0 0% 100%;
+    --destructive: 0 45% 45%;
+    --destructive-foreground: 0 0% 100%;
+    --warning: 40 85% 50%;
+    --warning-foreground: 45 30% 95%;
+
+    --border: 165 16% 22%;
+    --input: 165 16% 22%;
+    --ring: 152 35% 42%;
+
+    --surface-gradient-start: 165 18% 11%;
+    --surface-gradient-end: 165 18% 9%;
+    --surface-radial-tint: 152 35% 42%;
+    --surface-radial-opacity: 0.06;
+    --card-border: 165 16% 20%;
+    --card-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.12), 0 1px 2px -1px rgb(0 0 0 / 0.08);
+
+    --chart-1: 152 35% 45%;
+    --chart-2: 158 30% 50%;
+    --chart-3: 40 75% 55%;
+    --chart-4: 168 15% 50%;
+    --chart-5: 175 30% 48%;
+
+    /* Dynamic nav link accents (dark) */
+    --nav-1-bg: 158 35% 42% / 0.18;
+    --nav-1-bar: 158 35% 50%;
+    --nav-2-bg: 152 28% 40% / 0.18;
+    --nav-2-bar: 152 28% 50%;
+    --nav-3-bg: 168 15% 50% / 0.18;
+    --nav-3-bar: 168 15% 58%;
+    --nav-4-bg: 40 75% 55% / 0.15;
+    --nav-4-bar: 40 75% 60%;
+    --nav-5-bg: 175 30% 48% / 0.18;
+    --nav-5-bar: 175 30% 56%;
+    --nav-6-bg: 158 30% 45% / 0.18;
+    --nav-6-bar: 158 30% 52%;
   }
 }
 
@@ -46,7 +141,119 @@
   * {
     @apply border-border;
   }
-  body {
-    @apply bg-background text-foreground;
+  html {
+    @apply antialiased;
   }
+  html[lang="ar"],
+  html[dir="rtl"] {
+    direction: rtl;
+    text-align: right;
+  }
+  html[lang="en"],
+  html[lang="fr"] {
+    direction: ltr;
+    text-align: left;
+  }
+  body {
+    @apply bg-background text-foreground min-h-screen;
+  }
+
+  /* Layered content background: soft depth, subtle dynamic gradient */
+  .content-area {
+    background:
+      radial-gradient(
+        ellipse 120% 80% at 50% -20%,
+        hsl(var(--surface-radial-tint) / var(--surface-radial-opacity)),
+        transparent 55%
+      ),
+      linear-gradient(
+        165deg,
+        hsl(var(--surface-gradient-start)) 0%,
+        hsl(85 14% 95%) 25%,
+        hsl(var(--surface-gradient-end)) 50%,
+        hsl(90 12% 94%) 100%
+      );
+    background-attachment: local;
+  }
+}
+
+/* Card: soft elevation and subtle border tint */
+.card-surface {
+  border-radius: 1rem;
+  border-width: 1px;
+  border-color: hsl(var(--card-border));
+  background-color: hsl(var(--card));
+  color: hsl(var(--card-foreground));
+  box-shadow: var(--card-shadow);
+}
+
+/* Sidebar: dynamic background per link — professional, distinct */
+.sidebar-nav-link {
+  @apply relative rounded-xl px-3 py-2.5 text-sm transition-all duration-200;
+}
+.sidebar-nav-link.active {
+  @apply font-medium;
+}
+.sidebar-nav-link.active::before {
+  content: "";
+  @apply absolute top-1/2 -translate-y-1/2 w-1 rounded-full;
+  height: 56%;
+}
+[dir="rtl"] .sidebar-nav-link.active::before {
+  right: 0;
+  left: auto;
+}
+[dir="ltr"] .sidebar-nav-link.active::before {
+  left: 0;
+  right: auto;
+}
+.sidebar-nav-link:not(.active):hover {
+  @apply bg-muted/80;
+}
+
+/* Dynamic nav accent 1–6: each link gets its own background + bar */
+.sidebar-nav-link.active.nav-accent-1 {
+  background: hsl(var(--nav-1-bg));
+  color: hsl(var(--nav-1-bar));
+}
+.sidebar-nav-link.active.nav-accent-1::before { background: hsl(var(--nav-1-bar)); }
+.sidebar-nav-link.active.nav-accent-2 {
+  background: hsl(var(--nav-2-bg));
+  color: hsl(var(--nav-2-bar));
+}
+.sidebar-nav-link.active.nav-accent-2::before { background: hsl(var(--nav-2-bar)); }
+.sidebar-nav-link.active.nav-accent-3 {
+  background: hsl(var(--nav-3-bg));
+  color: hsl(var(--nav-3-bar));
+}
+.sidebar-nav-link.active.nav-accent-3::before { background: hsl(var(--nav-3-bar)); }
+.sidebar-nav-link.active.nav-accent-4 {
+  background: hsl(var(--nav-4-bg));
+  color: hsl(var(--nav-4-bar));
+}
+.sidebar-nav-link.active.nav-accent-4::before { background: hsl(var(--nav-4-bar)); }
+.sidebar-nav-link.active.nav-accent-5 {
+  background: hsl(var(--nav-5-bg));
+  color: hsl(var(--nav-5-bar));
+}
+.sidebar-nav-link.active.nav-accent-5::before { background: hsl(var(--nav-5-bar)); }
+.sidebar-nav-link.active.nav-accent-6 {
+  background: hsl(var(--nav-6-bg));
+  color: hsl(var(--nav-6-bar));
+}
+.sidebar-nav-link.active.nav-accent-6::before { background: hsl(var(--nav-6-bar)); }
+
+/* Table: clear hierarchy, subtle row hover */
+.table-header-muted thead tr {
+  @apply bg-muted/70 border-border;
+}
+.table-row-hover tbody tr:hover {
+  @apply bg-primary/[0.04];
+}
+
+/* Focus: consistent ring */
+input:focus-visible,
+button:focus-visible,
+[role="combobox"]:focus-visible {
+  @apply ring-2 ring-ring ring-offset-2 ring-offset-background;
 }

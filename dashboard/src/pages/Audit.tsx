@@ -6,8 +6,11 @@ import { fetchUsersMap } from "../api/users";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { PageHeader } from "@/components/PageHeader";
+import { FilterToolbar } from "@/components/FilterToolbar";
+import { EmptyState } from "@/components/EmptyState";
+import { SkeletonCard } from "@/components/SkeletonCard";
 import {
   Table,
   TableBody,
@@ -60,100 +63,55 @@ export default function Audit() {
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const pageRows = filtered.slice((page - 1) * pageSize, page * pageSize);
 
+  if (auditQ.isLoading)
+    return (
+      <div className="space-y-6">
+        <PageHeader title="سجل النشاط" subtitle="كل التغييرات المهمّة داخل النظام" />
+        <SkeletonCard lines={10} className="min-h-96" />
+      </div>
+    );
+
   return (
     <div className="space-y-6">
-      <div>
-        <div className="text-2xl font-semibold">سجل النشاط</div>
-        <div className="text-sm text-muted-foreground">
-          كل التغييرات المهمّة داخل النظام
-        </div>
-      </div>
-
-      <Card className="rounded-2xl">
-        <CardContent className="p-5 space-y-4">
-          <div className="flex flex-wrap gap-2 items-end">
-            <div className="space-y-1">
-              <div className="text-xs text-muted-foreground">بحث</div>
-              <Input
-                className="rounded-xl w-72"
-                placeholder="ابحث: confirm / policy / alert ..."
-                value={qText}
-                onChange={(e) => {
-                  setQText(e.target.value);
-                  setPage(1);
-                }}
-              />
-            </div>
-
-            <div className="space-y-1">
-              <div className="text-xs text-muted-foreground">من</div>
-              <Input
-                type="date"
-                className="rounded-xl"
-                value={from}
-                onChange={(e) => {
-                  setFrom(e.target.value);
-                  setPage(1);
-                }}
-              />
-            </div>
-
-            <div className="space-y-1">
-              <div className="text-xs text-muted-foreground">إلى</div>
-              <Input
-                type="date"
-                className="rounded-xl"
-                value={to}
-                onChange={(e) => {
-                  setTo(e.target.value);
-                  setPage(1);
-                }}
-              />
-            </div>
-
-            <Button
-              variant="outline"
-              className="rounded-xl"
-              onClick={() => {
-                setQText("");
-                setFrom("");
-                setTo("");
-                setPage(1);
-              }}
-            >
-              مسح الفلاتر
-            </Button>
-
-            <div className="text-sm text-muted-foreground ms-auto">
-              {filtered.length} حدث
-            </div>
-            <Button
-              variant="outline"
-              className="rounded-xl"
-              onClick={() => downloadFile("/api/export/audit.csv", "audit.csv")}
-            >
+      <PageHeader
+        title="سجل النشاط"
+        subtitle="كل التغييرات المهمّة داخل النظام"
+        actions={
+          <>
+            <Button variant="outline" className="rounded-xl" onClick={() => downloadFile("/export/audit.csv", "audit.csv")}>
               تنزيل CSV
             </Button>
-            <Button
-              variant="outline"
-              className="rounded-xl"
-              onClick={() => downloadFile("/api/export/audit.pdf", "audit.pdf")}
-            >
+            <Button variant="outline" className="rounded-xl" onClick={() => downloadFile("/export/audit.pdf", "audit.pdf")}>
               تنزيل PDF
             </Button>
-          </div>
+          </>
+        }
+      />
 
-          {auditQ.isLoading && (
-            <div className="text-sm text-muted-foreground">جاري التحميل...</div>
-          )}
+      <Card>
+        <CardContent className="p-5 space-y-4">
           {auditQ.isError && (
-            <div className="text-sm text-destructive">
-              تعذّر تحميل سجل النشاط
-            </div>
+            <EmptyState
+              title="تعذّر تحميل سجل النشاط"
+              action={<Button variant="outline" className="rounded-xl" onClick={() => auditQ.refetch()}>إعادة المحاولة</Button>}
+            />
           )}
 
           {auditQ.data && (
             <>
+              <FilterToolbar
+                className="mb-4"
+                search={qText}
+                onSearchChange={(v) => { setQText(v); setPage(1); }}
+                searchPlaceholder="ابحث: confirm / policy / alert ..."
+                dateRange={{ from, to }}
+                onDateRangeChange={(f, t) => { setFrom(f); setTo(t); setPage(1); }}
+                onClear={() => { setQText(""); setFrom(""); setTo(""); setPage(1); }}
+                clearLabel="مسح الفلاتر"
+              >
+                <span className="text-sm text-muted-foreground ms-auto">{filtered.length} حدث</span>
+              </FilterToolbar>
+
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -195,10 +153,7 @@ export default function Audit() {
                   })}
                   {pageRows.length === 0 && (
                     <TableRow>
-                      <TableCell
-                        colSpan={6}
-                        className="text-center text-muted-foreground"
-                      >
+                      <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
                         لا توجد أحداث
                       </TableCell>
                     </TableRow>

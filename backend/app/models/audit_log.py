@@ -36,7 +36,3 @@ class AuditLog(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=datetime.utcnow
     )
-
-    @property
-    def metadata(self) -> dict:
-        return self.metadata_

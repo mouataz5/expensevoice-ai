@@ -3,19 +3,19 @@ from fastapi.responses import Response
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import require_roles
+from app.core.permissions import EXPORT_READ, require_permission
 from app.db.deps import get_db
 from app.models.audit_log import AuditLog
 from app.models.user import User
 from app.services.pdf_report import simple_table_pdf
 
-router = APIRouter(prefix="/api/export", tags=["export"])
+router = APIRouter(prefix="/export", tags=["export"])
 
 
 @router.get("/audit.pdf")
 def export_audit_pdf(
     db: Session = Depends(get_db),
-    _user: User = require_roles("director", "admin"),
+    _user: User = require_permission(EXPORT_READ),
 ):
     rows_db = (
         db.execute(select(AuditLog).order_by(desc(AuditLog.created_at)))

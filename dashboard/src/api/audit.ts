@@ -20,6 +20,6 @@ export async function fetchAudit(params?: {
   to?: string;
   limit?: number;
 }): Promise<AuditRow[]> {
-  const res = await api.get("/api/audit", { params });
+  const res = await api.get("/audit", { params });
   return res.data;
 }

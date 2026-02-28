@@ -9,6 +9,7 @@ from app.core.policy_defaults import (
 )
 from app.core.security import hash_password
 from app.models.policy import Policy
+from app.models.setting import Setting
 from app.models.user import User
 
 
@@ -84,3 +85,21 @@ def seed_policies(db: Session):
             )
         )
         db.commit()
+
+
+def seed_settings(db: Session):
+    """Create default app settings row if none exists."""
+    existing = db.execute(select(Setting)).first()
+    if existing:
+        return
+    defaults = get_default_limits_policy()
+    db.add(
+        Setting(
+            company_name="نظام عبّاس لإدارة الضيعة",
+            currency="TND",
+            logo_url=None,
+            default_limits=defaults,
+            working_days=[0, 1, 2, 3, 4],  # Mon–Fri (ISO)
+        )
+    )
+    db.commit()

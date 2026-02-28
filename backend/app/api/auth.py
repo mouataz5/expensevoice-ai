@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import ACCESS_TOKEN_EXPIRE_MINUTES, JWT_SECRET
+from app.core.rate_limit import limiter
 from app.core.security import (
     create_access_token,
     hash_password,
@@ -12,13 +13,18 @@ from app.db.deps import get_db
 from app.models.user import User
 from app.schemas.auth import LoginIn, RegisterIn, TokenOut
 
-router = APIRouter(prefix="/api/auth", tags=["auth"])
+router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 @router.post("/register", response_model=TokenOut)
-def register(payload: RegisterIn, db: Session = Depends(get_db)):
+@limiter.limit("5/minute")
+def register(
+    request: Request,
+    payload: RegisterIn,
+    db: Session = Depends(get_db),
+):
     existing = db.execute(
-        select(User).where(User.email == payload.email)
+        select(User).where(User.email == payload.email, User.is_deleted == False)
     ).scalar_one_or_none()
 
     if existing:
@@ -47,13 +53,20 @@ def register(payload: RegisterIn, db: Session = Depends(get_db)):
 
 
 @router.post("/login", response_model=TokenOut)
-def login(payload: LoginIn, db: Session = Depends(get_db)):
+@limiter.limit("10/minute")
+def login(
+    request: Request,
+    payload: LoginIn,
+    db: Session = Depends(get_db),
+):
     user = db.execute(
-        select(User).where(User.email == payload.email)
+        select(User).where(User.email == payload.email, User.is_deleted == False)
     ).scalar_one_or_none()
 
     if not user or not verify_password(payload.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid credentials")
+    if not getattr(user, "is_active", True):
+        raise HTTPException(status_code=403, detail="Account is disabled")
 
     token = create_access_token(
         subject=str(user.id),

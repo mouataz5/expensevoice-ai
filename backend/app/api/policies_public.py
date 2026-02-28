@@ -7,7 +7,7 @@ from app.db.deps import get_db
 from app.models.policy import Policy
 from app.models.user import User
 
-router = APIRouter(prefix="/api/policies", tags=["policies-public"])
+router = APIRouter(prefix="/policies", tags=["policies-public"])
 
 
 @router.get("/categories-public")

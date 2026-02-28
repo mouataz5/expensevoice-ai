@@ -5,19 +5,20 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import and_, desc, select
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_current_user, require_roles
+from app.core.dependencies import get_current_user
+from app.core.permissions import AUDIT_READ, require_permission
 from app.db.deps import get_db
 from app.models.audit_log import AuditLog
 from app.models.user import User
 from app.schemas.audit import AuditOut
 
-router = APIRouter(prefix="/api/audit", tags=["audit"])
+router = APIRouter(prefix="/audit", tags=["audit"])
 
 
 @router.get("", response_model=list[AuditOut])
 def list_audit(
     db: Session = Depends(get_db),
-    _user: User = Depends(require_roles("director", "admin")),
+    _user: User = require_permission(AUDIT_READ),
     actor_user_id: str | None = Query(default=None),
     action: str | None = Query(default=None),
     entity_type: str | None = Query(default=None),

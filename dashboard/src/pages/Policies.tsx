@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
+import { PageHeader } from "@/components/PageHeader";
 import { Skeleton } from "@/components/ui/skeleton";
 import TagInput from "@/components/TagInput";
 
@@ -68,15 +69,11 @@ export default function Policies() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between">
-        <div>
-          <div className="text-2xl font-semibold">{t("policies.title")}</div>
-          <div className="text-sm text-muted-foreground">
-            {t("policies.subtitle")}
-          </div>
-        </div>
-        <Badge variant="secondary">{t("policies.admin")}</Badge>
-      </div>
+      <PageHeader
+        title={t("policies.title")}
+        subtitle={t("policies.subtitle")}
+        actions={<Badge variant="info">{t("policies.admin")}</Badge>}
+      />
 
       {q.isLoading && (
         <div className="space-y-6">
@@ -98,7 +95,7 @@ export default function Policies() {
 
       {!q.isLoading && (
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <Card className="rounded-2xl">
+        <Card>
           <CardContent className="p-5 space-y-4">
             <div className="flex items-center justify-between">
               <div>
@@ -132,7 +129,7 @@ export default function Policies() {
           </CardContent>
         </Card>
 
-        <Card className="rounded-2xl">
+        <Card>
           <CardContent className="p-5 space-y-4">
             <div className="flex items-center justify-between">
               <div>

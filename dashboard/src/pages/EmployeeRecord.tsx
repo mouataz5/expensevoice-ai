@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
-import { extractPurchase, confirmPurchase, uploadVoice } from "../api/purchases";
+import { extractPurchase, confirmPurchase, uploadVoice, getPurchase } from "../api/purchases";
 import { fetchAllowedCategories } from "../api/policies_public";
 
 import { Card, CardContent } from "@/components/ui/card";
@@ -10,6 +10,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { PageHeader } from "@/components/PageHeader";
+import { Stepper } from "@/components/Stepper";
 
 function pickMimeType(): string {
   const preferred = [
@@ -55,9 +57,14 @@ export default function EmployeeRecord() {
   const chunksRef = useRef<BlobPart[]>([]);
   const timerRef = useRef<number | null>(null);
 
+  // Part 3: Transaction type (بيع / شراء) — must choose before recording
+  const [transactionType, setTransactionType] = useState<"sell" | "buy" | null>(null);
+  const [processing, setProcessing] = useState(false);
+
   // Flow state
   const [purchaseId, setPurchaseId] = useState<string | null>(null);
   const [transcription, setTranscription] = useState<string>("");
+  const reviewCardRef = useRef<HTMLDivElement>(null);
 
   const [form, setForm] = useState({
     product_name: "",
@@ -138,31 +145,67 @@ export default function EmployeeRecord() {
     toast.success("تم إيقاف التسجيل");
   };
 
-  const resetAll = () => {
+  const resetAll = useCallback(() => {
     setAudioFile(null);
     if (audioUrl) URL.revokeObjectURL(audioUrl);
     setAudioUrl(null);
     setElapsedMs(0);
     setPurchaseId(null);
     setTranscription("");
+    setProcessing(false);
+    setTransactionType(null);
     setForm({ product_name: "", category: "", quantity: 1, unit_price: 0 });
-  };
+  }, [audioUrl]);
 
   const uploadM = useMutation({
     mutationFn: async () => {
       if (!audioFile) throw new Error("no audio");
-      return uploadVoice(audioFile, "ar");
+      if (!transactionType) throw new Error("اختر نوع العملية: بيع أو شراء");
+      return uploadVoice(audioFile, "ar", transactionType);
     },
-    onSuccess: (data: { purchase_id: string; transcription?: string; transcription_failed?: boolean }) => {
+    onSuccess: (data: { purchase_id: string; processing_status?: string }) => {
       setPurchaseId(data.purchase_id);
-      setTranscription(data.transcription || "");
-      if (data.transcription_failed) {
-        toast.warning("تم الرفع لكن تعذّر تحويل الصوت إلى نص. تحقق من صيغة الملف أو الخدمة.");
-      } else {
-        toast.success("تم رفع التسجيل وتحويله إلى نص");
-      }
+      setProcessing(true);
+      toast.info("جارٍ معالجة التسجيل...");
+      let attempts = 0;
+      const maxAttempts = 40;
+      const interval = 1500;
+      const poll = () => {
+        attempts += 1;
+        getPurchase(data.purchase_id)
+          .then((p: { processing_status?: string; transcription?: string; product_name?: string; category?: string; quantity?: number; unit_price?: number }) => {
+            setTranscription((p.transcription as string) || "");
+            if (p.processing_status === "ready_for_review" || p.processing_status === "approved") {
+              setProcessing(false);
+              if (p.product_name) {
+                setForm({
+                  product_name: (p.product_name as string) ?? "",
+                  category: (p.category as string) ?? "",
+                  quantity: typeof p.quantity === "number" ? p.quantity : 1,
+                  unit_price: typeof p.unit_price === "number" ? p.unit_price : 0,
+                });
+              }
+              toast.success("تمت المعالجة. راجع البيانات وأكّد.");
+              reviewCardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+              return;
+            }
+            if (attempts < maxAttempts) setTimeout(poll, interval);
+            else {
+              setProcessing(false);
+              toast.warning("لم تكتمل المعالجة بعد. حدّث الصفحة أو جرّب الاستخراج يدوياً.");
+            }
+          })
+          .catch(() => {
+            if (attempts < maxAttempts) setTimeout(poll, interval);
+            else setProcessing(false);
+          });
+      };
+      setTimeout(poll, interval);
     },
-    onError: () => toast.error("فشل رفع التسجيل"),
+    onError: () => {
+      setProcessing(false);
+      toast.error("فشل رفع التسجيل");
+    },
   });
 
   const extractM = useMutation({
@@ -206,11 +249,18 @@ export default function EmployeeRecord() {
 
   const allowed = categoriesQ.data ?? [];
 
+  const steps = [
+    { key: "record", label: "تسجيل", done: !!audioFile, active: !audioFile },
+    { key: "upload", label: "رفع", done: !!purchaseId, active: !!audioFile && !purchaseId },
+    { key: "extract", label: "استخراج", done: !!form.product_name || !!transcription, active: !!purchaseId && !form.product_name && !transcription },
+    { key: "confirm", label: "تأكيد", done: false, active: !!form.product_name && !!purchaseId },
+  ];
+
   if (!supported) {
     return (
       <div className="space-y-3">
-        <div className="text-2xl font-semibold">تسجيل عملية بالصوت</div>
-        <div className="text-sm text-destructive">
+        <PageHeader title="تسجيل عملية بالصوت" />
+        <div className="text-sm text-destructive rounded-2xl border border-destructive/20 bg-destructive/5 p-4">
           المتصفح لا يدعم التسجيل الصوتي. استعمل Chrome/Edge أو حدّث المتصفح.
         </div>
       </div>
@@ -219,24 +269,63 @@ export default function EmployeeRecord() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div>
-          <div className="text-2xl font-semibold">تسجيل عملية بالصوت</div>
-          <div className="text-sm text-muted-foreground">تسجيل → رفع → استخراج → تأكيد</div>
-        </div>
-        <Button variant="outline" className="rounded-xl" onClick={resetAll}>
-          إعادة تعيين
-        </Button>
-      </div>
+      <PageHeader
+        title="تسجيل عملية بالصوت"
+        subtitle="تسجيل → رفع → استخراج → تأكيد"
+        actions={
+          <Button variant="outline" className="rounded-xl" onClick={resetAll}>
+            إعادة تعيين
+          </Button>
+        }
+      />
+
+      <Stepper steps={steps} className="mb-2" />
+
+      {/* Part 3: Transaction type — choose before recording */}
+      <Card>
+        <CardContent className="p-5 space-y-4">
+          <div className="space-y-2">
+            <Label className="text-base">نوع العملية</Label>
+            <div className="flex gap-3 flex-wrap">
+              <Button
+                type="button"
+                variant={transactionType === "sell" ? "default" : "outline"}
+                className="rounded-xl"
+                onClick={() => setTransactionType("sell")}
+              >
+                بيع
+              </Button>
+              <Button
+                type="button"
+                variant={transactionType === "buy" ? "default" : "outline"}
+                className="rounded-xl"
+                onClick={() => setTransactionType("buy")}
+              >
+                شراء
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              اختر بيع أو شراء قبل بدء التسجيل.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Recorder */}
-      <Card className="rounded-2xl">
+      <Card>
         <CardContent className="p-5 space-y-4">
+          {processing && (
+            <div className="flex items-center gap-2 rounded-xl bg-primary/10 border border-primary/20 p-3 text-primary">
+              <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+              <span>جارٍ معالجة التسجيل...</span>
+            </div>
+          )}
+
           <div className="flex items-center justify-between">
             <div className="space-y-1">
               <div className="font-medium">المسجّل</div>
               <div className="text-sm text-muted-foreground">
-                {recording ? "جاري التسجيل..." : "جاهز"}
+                {recording ? "جاري التسجيل..." : transactionType ? "جاهز" : "اختر نوع العملية أولاً"}
               </div>
             </div>
             <Badge variant={recording ? "destructive" : "secondary"}>
@@ -245,7 +334,7 @@ export default function EmployeeRecord() {
           </div>
 
           {permissionError && (
-            <div className="text-sm text-destructive bg-destructive/10 p-3 rounded-xl">
+            <div className="text-sm text-destructive bg-destructive/10 p-3 rounded-xl border border-destructive/20">
               {permissionError}
             </div>
           )}
@@ -256,7 +345,11 @@ export default function EmployeeRecord() {
             </div>
 
             {!recording ? (
-              <Button className="rounded-xl" onClick={startRecording}>
+              <Button
+                className="rounded-xl"
+                onClick={startRecording}
+                disabled={!transactionType || processing}
+              >
                 ابدأ التسجيل
               </Button>
             ) : (
@@ -268,7 +361,7 @@ export default function EmployeeRecord() {
             <Button
               className="rounded-xl"
               onClick={() => uploadM.mutate()}
-              disabled={!audioFile || uploadM.isPending}
+              disabled={!audioFile || uploadM.isPending || processing}
             >
               {uploadM.isPending ? "جاري الرفع..." : "إرسال التسجيل"}
             </Button>
@@ -304,8 +397,8 @@ export default function EmployeeRecord() {
         </CardContent>
       </Card>
 
-      {/* Review + Confirm */}
-      <Card className="rounded-2xl">
+      {/* Review + Confirm — Part 3: ref for auto-scroll when ready */}
+      <Card ref={reviewCardRef}>
         <CardContent className="p-5 space-y-4">
           <div className="font-medium">مراجعة البيانات</div>
 

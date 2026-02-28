@@ -10,3 +10,6 @@ python-multipart
 faster-whisper
 httpx>=0.27
 reportlab
+slowapi
+# Optional: for invoice OCR (Arabic + French). Without it, scan still works but extraction uses empty OCR text.
+# easyocr

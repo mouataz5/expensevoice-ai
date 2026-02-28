@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import require_roles
+from app.core.permissions import POLICIES_WRITE, require_permission
 from app.db.deps import get_db
 from app.models.policy import Policy
 from app.models.user import User
@@ -14,13 +14,13 @@ from app.schemas.policy import (
 )
 from app.services.audit import audit_log
 
-router = APIRouter(prefix="/api/admin/policies", tags=["policies-admin"])
+router = APIRouter(prefix="/admin/policies", tags=["policies-admin"])
 
 
 @router.get("", response_model=list[PolicyOut])
 def list_policies(
     db: Session = Depends(get_db),
-    _user: User = require_roles("admin"),
+    _user: User = require_permission(POLICIES_WRITE),
 ):
     rows = (
         db.execute(select(Policy).order_by(Policy.policy_type.asc()))
@@ -34,7 +34,7 @@ def list_policies(
 def get_policy(
     policy_type: str,
     db: Session = Depends(get_db),
-    _user: User = require_roles("admin"),
+    _user: User = require_permission(POLICIES_WRITE),
 ):
     p = db.execute(
         select(Policy).where(Policy.policy_type == policy_type)
@@ -49,7 +49,7 @@ def update_policy(
     policy_type: str,
     payload: PolicyUpdate,
     db: Session = Depends(get_db),
-    _user: User = require_roles("admin"),
+    _user: User = require_permission(POLICIES_WRITE),
 ):
     p = db.execute(
         select(Policy).where(Policy.policy_type == policy_type)

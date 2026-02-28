@@ -4,13 +4,14 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_current_user, require_roles
+from app.core.dependencies import get_current_user
+from app.core.permissions import PURCHASES_READ_ALL, require_permission
 from app.db.deps import get_db
 from app.models.purchase import Purchase
 from app.models.user import User
 from app.schemas.purchase import PurchaseCreate, PurchaseOut
 
-router = APIRouter(prefix="/api/purchases", tags=["purchases"])
+router = APIRouter(prefix="/purchases", tags=["purchases"])
 
 
 @router.post("", response_model=PurchaseOut)
@@ -47,7 +48,7 @@ def list_my_purchases(
     rows = (
         db.execute(
             select(Purchase)
-            .where(Purchase.user_id == user.id)
+            .where(Purchase.user_id == user.id, Purchase.is_deleted == False)
             .order_by(Purchase.created_at.desc())
         )
         .scalars()
@@ -59,11 +60,11 @@ def list_my_purchases(
 @router.get("/all", response_model=list[PurchaseOut])
 def list_all_purchases(
     db: Session = Depends(get_db),
-    _user: User = require_roles("director", "admin"),
+    _user: User = require_permission(PURCHASES_READ_ALL),
 ):
     rows = (
         db.execute(
-            select(Purchase).order_by(Purchase.created_at.desc())
+            select(Purchase).where(Purchase.is_deleted == False).order_by(Purchase.created_at.desc())
         )
         .scalars()
         .all()

@@ -30,3 +30,5 @@ class User(Base):
         nullable=False,
         default="employee",  # employee / director / admin
     )
+    is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
+    is_deleted: Mapped[bool] = mapped_column(default=False, nullable=False)

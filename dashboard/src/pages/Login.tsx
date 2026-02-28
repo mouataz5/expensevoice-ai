@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
+import { useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { fetchMe } from "../api/me";
 import { useAuth } from "../auth/AuthContext";
@@ -17,14 +18,16 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const { setToken } = useAuth();
   const nav = useNavigate();
+  const queryClient = useQueryClient();
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     setLoading(true);
     try {
-      const res = await api.post("/api/auth/login", { email, password });
+      const res = await api.post("/auth/login", { email, password });
       setToken(res.data.access_token);
+      await queryClient.invalidateQueries({ queryKey: ["me"] });
       const me = await fetchMe();
       if (me.role === "employee") {
         nav("/employee/record");
@@ -40,11 +43,11 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center p-4">
-      <Card className="w-full max-w-md rounded-2xl">
+    <div className="min-h-screen content-area flex items-center justify-center p-4">
+      <Card className="w-full max-w-md shadow-sm">
         <CardContent className="p-6 space-y-5">
-          <div className="space-y-1">
-            <div className="text-2xl font-semibold">{t("login.title")}</div>
+          <div className="space-y-1 text-center">
+            <div className="text-2xl font-semibold text-primary">{t("login.title")}</div>
             <div className="text-sm text-muted-foreground">
               {t("login.subtitle")}
             </div>

@@ -6,21 +6,23 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import require_roles
+from app.core.permissions import EXPORT_READ, require_permission
 from app.db.deps import get_db
 from app.models.alert import Alert
 from app.models.user import User
 
-router = APIRouter(prefix="/api/export", tags=["export"])
+router = APIRouter(prefix="/export", tags=["export"])
 
 
 @router.get("/alerts.csv")
 def export_alerts_csv(
     db: Session = Depends(get_db),
-    _user: User = require_roles("director", "admin"),
+    _user: User = require_permission(EXPORT_READ),
 ):
     alerts = (
-        db.execute(select(Alert).order_by(Alert.created_at.desc()))
+        db.execute(
+            select(Alert).where(Alert.is_deleted == False).order_by(Alert.created_at.desc())
+        )
         .scalars()
         .all()
     )

@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import Date, cast, func, select
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import require_roles
+from app.core.permissions import STATS_READ, require_permission
 from app.db.deps import get_db
 from app.models.purchase import Purchase
 from app.models.user import User
@@ -15,13 +15,13 @@ from app.schemas.stats import (
     UserStat,
 )
 
-router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
+router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 
 @router.get("/stats", response_model=DashboardStats)
 def get_stats(
     db: Session = Depends(get_db),
-    _user: User = require_roles("director", "admin"),
+    _user: User = require_permission(STATS_READ),
     from_date: date | None = Query(default=None, alias="from"),
     to_date: date | None = Query(default=None, alias="to"),
 ):
@@ -43,37 +43,43 @@ def get_stats(
 
     start_today = datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
 
-    # Today metrics
-    total_today = db.execute(
+    # Today metrics (aggregates always return one row)
+    total_today_row = db.execute(
         select(func.coalesce(func.sum(Purchase.total_amount), 0))
         .select_from(Purchase)
-        .where(Purchase.created_at >= start_today)
-    ).scalar_one()
+        .where(Purchase.created_at >= start_today, Purchase.is_deleted == False)
+    ).first()
+    total_today = float(total_today_row[0]) if total_today_row else 0.0
 
-    count_today = db.execute(
+    count_today_row = db.execute(
         select(func.count(Purchase.id))
         .select_from(Purchase)
-        .where(Purchase.created_at >= start_today)
-    ).scalar_one()
+        .where(Purchase.created_at >= start_today, Purchase.is_deleted == False)
+    ).first()
+    count_today = int(count_today_row[0]) if count_today_row else 0
 
     # Range totals
-    total_range = db.execute(
+    total_range_row = db.execute(
         select(func.coalesce(func.sum(Purchase.total_amount), 0))
         .select_from(Purchase)
         .where(
             Purchase.created_at >= start_dt,
             Purchase.created_at < end_dt,
+            Purchase.is_deleted == False,
         )
-    ).scalar_one()
+    ).first()
+    total_range = float(total_range_row[0]) if total_range_row else 0.0
 
-    count_range = db.execute(
+    count_range_row = db.execute(
         select(func.count(Purchase.id))
         .select_from(Purchase)
         .where(
             Purchase.created_at >= start_dt,
             Purchase.created_at < end_dt,
+            Purchase.is_deleted == False,
         )
-    ).scalar_one()
+    ).first()
+    count_range = int(count_range_row[0]) if count_range_row else 0
 
     # By category (range)
     by_category_rows = db.execute(
@@ -88,6 +94,7 @@ def get_stats(
         .where(
             Purchase.created_at >= start_dt,
             Purchase.created_at < end_dt,
+            Purchase.is_deleted == False,
         )
         .group_by(Purchase.category)
         .order_by(func.coalesce(func.sum(Purchase.total_amount), 0).desc())
@@ -113,6 +120,7 @@ def get_stats(
         .where(
             Purchase.created_at >= start_dt,
             Purchase.created_at < end_dt,
+            Purchase.is_deleted == False,
         )
         .group_by(Purchase.user_id)
         .order_by(func.coalesce(func.sum(Purchase.total_amount), 0).desc())
@@ -123,7 +131,9 @@ def get_stats(
     users_map = {}
     if user_ids:
         users_list = db.execute(
-            select(User.id, User.email).where(User.id.in_(user_ids))
+            select(User.id, User.email).where(
+                User.id.in_(user_ids), User.is_deleted == False
+            )
         ).all()
         users_map = {str(u[0]): u[1] for u in users_list}
 
@@ -150,6 +160,7 @@ def get_stats(
         .where(
             Purchase.created_at >= start_dt,
             Purchase.created_at < end_dt,
+            Purchase.is_deleted == False,
         )
         .group_by(cast(Purchase.created_at, Date))
         .order_by(cast(Purchase.created_at, Date).asc())
@@ -163,10 +174,10 @@ def get_stats(
     ]
 
     return DashboardStats(
-        total_amount_today=float(total_today),
-        total_amount_month=float(total_range),
-        purchases_today=int(count_today),
-        purchases_month=int(count_range),
+        total_amount_today=total_today,
+        total_amount_month=total_range,
+        purchases_today=count_today,
+        purchases_month=count_range,
         by_category=by_category,
         top_users=top_users,
         daily_trend_last_14_days=daily_trend,

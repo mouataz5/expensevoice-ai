@@ -4,16 +4,36 @@
     "view_subtitle": "Director / Admin view",
     "view_subtitle_employee": "Employee view",
     "theme_light": "Light",
-    "theme_dark": "Dark"
+    "theme_dark": "Dark",
+    "retry": "Retry",
+    "cancel": "Cancel"
+  },
+  "site": {
+    "brand": "Abes AgroTech",
+    "nav": { "home": "Home", "about": "About", "services": "Services", "contact": "Contact", "login": "Login" },
+    "hero": { "title": "Smart platform for sales, expenses and invoices", "subtitle": "Voice input, invoice scan, alerts and PDF/CSV reports.", "ctaStart": "Get started", "ctaDemo": "Request a demo" },
+    "features": { "title": "Features", "subtitle": "All you need for smart financial management", "f1": "Voice input (Derja/AR/FR)", "f2": "Invoice scan → PDF report", "f3": "Alerts and limits", "f4": "Audit and traceability", "f5": "PDF/CSV exports", "f6": "Dashboards" },
+    "how": { "title": "How it works", "step1": "Record (voice/photo)", "step2": "Auto extraction", "step3": "Admin validation + reports" },
+    "trust": { "title": "Security, traceability, performance" },
+    "cta": { "title": "Ready to start?", "subtitle": "Join Abes AgroTech", "btn": "Get started" },
+    "footer": { "desc": "Smart platform for agricultural sales, expenses and operations.", "links": "Quick links", "contact": "Contact", "copyright": "All rights reserved" },
+    "about": { "title": "About", "mission": "Our mission", "missionText": "Empower agricultural businesses to track sales and expenses with ease.", "vision": "Our vision", "visionText": "Be the leading technical partner for the agricultural sector in Tunisia.", "values": "Our values", "valuesTitle": "Why Abes AgroTech", "valuesText": "We understand the needs of farmers and agribusiness. A simple, powerful platform for the Tunisian context." },
+    "services": { "title": "Services", "subtitle": "Solutions for your sector", "s1": "Voice capture purchases/sales", "s1d": "Voice input with automatic data extraction.", "s2": "Invoice scan to PDF", "s2d": "Upload invoice image, get bilingual PDF report.", "s3": "Policies and alerts", "s3d": "Amount limits, categories, real-time alerts.", "s4": "Audit log", "s4d": "Full traceability of actions.", "s5": "Dashboard analytics", "s5d": "Indicators, charts, PDF/CSV export.", "s6": "Multilingual UI", "s6d": "Arabic and French with full RTL." },
+    "contact": { "title": "Contact", "subtitle": "We are here to help", "name": "Name", "email": "Email", "message": "Message", "send": "Send", "sendSuccess": "Message sent. We will get back to you.", "placeholderName": "Your name", "placeholderEmail": "you@example.com", "placeholderMessage": "Your message...", "whatsapp": "WhatsApp", "emailLabel": "Email" },
+    "auth": { "login": "Login", "register": "Register", "forgotPassword": "Forgot password?", "backToSite": "Back to site", "email": "Email", "password": "Password", "confirmPassword": "Confirm password", "signIn": "Sign in", "signUp": "Sign up", "noAccount": "No account?", "hasAccount": "Already have an account?" }
   },
   "nav": {
     "stats": "Stats",
     "alerts": "Alerts",
     "audit": "Activity log",
     "record": "Record voice",
+    "scanInvoice": "Scan invoice",
+    "invoiceReview": "Invoices for review",
     "myPurchases": "My purchases",
     "myAlerts": "My alerts",
     "policies": "Policies",
+    "users": "Users",
+    "settings": "Settings",
     "logout": "Logout"
   },
   "login": {
@@ -78,7 +98,8 @@
     "page": "Page",
     "of": "of",
     "resolved_ok": "Alert resolved",
-    "resolved_fail": "Failed to resolve alert"
+    "resolved_fail": "Failed to resolve alert",
+    "clear_filters": "Clear filters"
   },
   "policies": {
     "title": "Policies",
@@ -99,6 +120,59 @@
     "saving": "Saving...",
     "saved": "Policies saved",
     "saveFail": "Failed to save policies"
+  },
+  "users": {
+    "title": "User Management",
+    "subtitle": "Add and edit users and roles",
+    "addUser": "Add user",
+    "email": "Email",
+    "password": "Password",
+    "role": "Role",
+    "status": "Status",
+    "actions": "Actions",
+    "active": "Active",
+    "disabled": "Disabled",
+    "resetPassword": "Reset password",
+    "newPassword": "New password",
+    "reset": "Reset",
+    "create": "Create",
+    "creating": "Creating...",
+    "created": "User created",
+    "createFail": "Failed to create user",
+    "updated": "Updated",
+    "updateFail": "Failed to update",
+    "passwordReset": "Password reset",
+    "resetFail": "Failed to reset password",
+    "loadError": "Failed to load users",
+    "noUsers": "No users yet"
+  },
+  "settings": {
+    "title": "Settings",
+    "subtitle": "Company name, currency, logo, default limits, working days",
+    "companyName": "Company name",
+    "currency": "Currency",
+    "logoUrl": "Logo URL",
+    "logoUrlHint": "Enter the URL of your logo image",
+    "defaultLimits": "Default limits",
+    "maxPerPurchase": "Max per purchase",
+    "dailyLimitDefault": "Default daily limit",
+    "workingDays": "Working days",
+    "days": {
+      "mon": "Mon",
+      "tue": "Tue",
+      "wed": "Wed",
+      "thu": "Thu",
+      "fri": "Fri",
+      "sat": "Sat",
+      "sun": "Sun"
+    },
+    "save": "Save",
+    "saving": "Saving...",
+    "saved": "Settings saved",
+    "saveFail": "Failed to save",
+    "adminOnly": "Only admin can update settings",
+    "viewOnly": "View only — saving is restricted to admin.",
+    "loadError": "Failed to load settings"
   },
   "employee": {
     "recordTitle": "Record purchase by voice",
@@ -135,6 +209,12 @@
     "myAlertsTitle": "My alerts",
     "myAlertsSubtitle": "Alerts linked to my operations",
     "alertsLoadError": "Failed to load alerts",
-    "noAlerts": "No alerts 🎉"
+    "noAlerts": "No alerts 🎉",
+    "searchPurchases": "Search purchases...",
+    "filter_all": "All",
+    "filter_pending": "Pending",
+    "filter_approved": "Approved",
+    "results": "results",
+    "noPurchasesFilter": "No purchases match the filter"
   }
 }

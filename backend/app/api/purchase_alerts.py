@@ -10,7 +10,7 @@ from app.models.alert import Alert
 from app.models.purchase import Purchase
 from app.models.user import User
 
-router = APIRouter(prefix="/api/purchases", tags=["purchase-alerts"])
+router = APIRouter(prefix="/purchases", tags=["purchase-alerts"])
 
 
 @router.get("/{purchase_id}/alerts")
@@ -19,7 +19,9 @@ def alerts_for_purchase(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    p = db.execute(select(Purchase).where(Purchase.id == purchase_id)).scalar_one_or_none()
+    p = db.execute(
+        select(Purchase).where(Purchase.id == purchase_id, Purchase.is_deleted == False)
+    ).scalar_one_or_none()
     if not p:
         raise HTTPException(status_code=404, detail="Purchase not found")
 
@@ -29,7 +31,7 @@ def alerts_for_purchase(
     alerts = (
         db.execute(
             select(Alert)
-            .where(Alert.purchase_id == p.id)
+            .where(Alert.purchase_id == p.id, Alert.is_deleted == False)
             .order_by(Alert.created_at.desc())
         )
         .scalars()

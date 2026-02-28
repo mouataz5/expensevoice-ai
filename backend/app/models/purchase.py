@@ -35,6 +35,20 @@ class Purchase(Base):
         String(50), nullable=False, default="pending"
     )  # approved/pending/rejected
 
+    # Voice pipeline: transaction_type (sell/buy), processing_status, confidences
+    transaction_type: Mapped[str] = mapped_column(
+        String(20), nullable=True
+    )  # "sell" | "buy"
+    processing_status: Mapped[str] = mapped_column(
+        String(30), nullable=True, default="processing"
+    )  # processing | ready_for_review | approved
+    stt_confidence: Mapped[float | None] = mapped_column(
+        Numeric(5, 4), nullable=True
+    )
+    extraction_confidence: Mapped[float | None] = mapped_column(
+        Numeric(5, 4), nullable=True
+    )
+
     # Voice fields
     audio_file_path: Mapped[str] = mapped_column(String(500), nullable=True)
     transcription: Mapped[str] = mapped_column(Text, nullable=True)
@@ -45,3 +59,4 @@ class Purchase(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=datetime.utcnow
     )
+    is_deleted: Mapped[bool] = mapped_column(default=False, nullable=False)

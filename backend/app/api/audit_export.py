@@ -6,18 +6,18 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import require_roles
+from app.core.permissions import EXPORT_READ, require_permission
 from app.db.deps import get_db
 from app.models.audit_log import AuditLog
 from app.models.user import User
 
-router = APIRouter(prefix="/api/export", tags=["export"])
+router = APIRouter(prefix="/export", tags=["export"])
 
 
 @router.get("/audit.csv")
 def export_audit_csv(
     db: Session = Depends(get_db),
-    _user: User = require_roles("director", "admin"),
+    _user: User = require_permission(EXPORT_READ),
 ):
     rows = (
         db.execute(select(AuditLog).order_by(desc(AuditLog.created_at)))
