@@ -20,7 +20,7 @@ from app.db.deps import get_db
 from app.models.invoice import Invoice
 from app.models.purchase import Purchase
 from app.models.user import User
-from app.schemas.invoice import InvoiceRejectIn, invoice_to_list_item, invoice_to_status_out
+from app.schemas.invoice import InvoiceRejectIn, invoice_to_list_item, invoice_to_preview, invoice_to_status_out
 from app.services.audit import audit_log
 from app.services.invoice_processing import process_invoice_async
 from app.services.ocr_service import ALLOWED_MIME, MAX_IMAGE_BYTES
@@ -115,6 +115,23 @@ def get_invoice(
     if user.role == "employee" and inv.user_id != user.id:
         raise HTTPException(status_code=403, detail="Forbidden")
     return invoice_to_status_out(inv)
+
+
+@router.get("/{invoice_id}/preview")
+def get_invoice_preview(
+    invoice_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Return extracted data for dashboard review. Owner or admin/director."""
+    inv = db.execute(select(Invoice).where(Invoice.id == invoice_id)).scalar_one_or_none()
+    if not inv:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    if user.role == "employee" and inv.user_id != user.id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if inv.status not in ("ready", "ready_for_review", "approved"):
+        raise HTTPException(status_code=400, detail="Invoice not ready for preview")
+    return invoice_to_preview(inv)
 
 
 @router.get("/{invoice_id}/pdf")

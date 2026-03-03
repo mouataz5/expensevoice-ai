@@ -168,7 +168,8 @@ export default function EmployeeRecord() {
       setProcessing(true);
       toast.info("جارٍ معالجة التسجيل...");
       let attempts = 0;
-      const maxAttempts = 40;
+      // Allow more time for STT + LLM on slower machines/models.
+      const maxAttempts = 80; // 80 * 1.5s ≈ 2 minutes
       const interval = 1500;
       const poll = () => {
         attempts += 1;
@@ -213,7 +214,7 @@ export default function EmployeeRecord() {
       if (!purchaseId) throw new Error("no purchaseId");
       return extractPurchase(purchaseId);
     },
-    onSuccess: (data: { extracted: Record<string, unknown> }) => {
+    onSuccess: (data: { extracted: Record<string, unknown>; fallback?: boolean }) => {
       const ex = data.extracted;
       setForm({
         product_name: (ex.product_name as string) ?? "",
@@ -221,7 +222,11 @@ export default function EmployeeRecord() {
         quantity: (ex.quantity as number) ?? 1,
         unit_price: (ex.unit_price as number) ?? 0,
       });
-      toast.success("تم استخراج البيانات");
+      if (data.fallback) {
+        toast.info("المحرك اللغوي غير متصل — راجع البيانات يدوياً وأكّد العملية");
+      } else {
+        toast.success("تم استخراج البيانات");
+      }
     },
     onError: () => toast.error("فشل استخراج البيانات"),
   });

@@ -7,5 +7,5 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         resp.headers["X-Content-Type-Options"] = "nosniff"
         resp.headers["X-Frame-Options"] = "DENY"
         resp.headers["Referrer-Policy"] = "no-referrer"
-        resp.headers["Permissions-Policy"] = "microphone=(), camera=()"
+        resp.headers["Permissions-Policy"] = "microphone=(self), camera=(self)"
         return resp

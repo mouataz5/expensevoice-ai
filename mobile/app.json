@@ -1,0 +1,49 @@
+{
+  "expo": {
+    "name": "Abes AgroTech",
+    "slug": "abes-agrotech-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "scheme": "abesagrotech",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#14532D"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "tn.abesagrotech.app"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#14532D"
+      },
+      "package": "tn.abesagrotech.app"
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static",
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-camera",
+        { "cameraPermission": "Allow Abes AgroTech to access your camera to scan invoices." }
+      ],
+      [
+        "expo-image-picker",
+        { "photosPermission": "Allow Abes AgroTech to access your photos to upload invoice images." }
+      ],
+      [
+        "expo-av",
+        { "microphonePermission": "Allow Abes AgroTech to record voice for purchases." }
+      ]
+    ]
+  }
+}

@@ -26,7 +26,10 @@ ALLOWED_MIME = {"audio/webm", "audio/mp4", "audio/mpeg", "audio/wav", "audio/ogg
 
 
 def validate_audio_file(audio: UploadFile, raw: bytes) -> None:
-    if (audio.content_type or "").strip().lower() not in ALLOWED_MIME:
+    ct_full = (audio.content_type or "").strip().lower()
+    # Browsers often send values like "audio/webm;codecs=opus" — we only care about the base type.
+    ct = ct_full.split(";", 1)[0]
+    if ct not in ALLOWED_MIME:
         raise HTTPException(
             status_code=415,
             detail=f"Unsupported audio type: {audio.content_type}",
@@ -61,7 +64,7 @@ async def record_purchase_voice(
 
     STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 
-    ct = (audio.content_type or "").strip().lower()
+    ct = (audio.content_type or "").strip().lower().split(";", 1)[0]
     ext = "webm"
     if ct == "audio/mp4":
         ext = "mp4"

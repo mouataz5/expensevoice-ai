@@ -170,7 +170,7 @@ def evaluate_rules_and_create_alerts(
         .scalars()
         .all()
     )
-    recent_cats = [r[0] for r in recent if r[0]]
+    recent_cats = [r for r in recent if r]
     if len(recent_cats) >= CATEGORY_CHANGE_MIN_RECENT and purchase.category:
         from collections import Counter
         counts = Counter(recent_cats)

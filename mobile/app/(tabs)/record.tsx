@@ -1,0 +1,189 @@
+import { useState, useRef } from "react";
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  ActivityIndicator,
+  TextInput,
+  ScrollView,
+  Alert,
+} from "react-native";
+import { useLocale } from "../../src/context/LocaleContext";
+import { colors } from "../../src/theme/colors";
+import { uploadVoice, getPurchase, confirmPurchase, type PurchaseOut } from "../../src/api/purchases";
+import Toast from "react-native-toast-message";
+import { Audio } from "expo-av";
+
+type TxType = "buy" | "sell" | null;
+
+export default function RecordScreen() {
+  const { t } = useLocale();
+  const [txType, setTxType] = useState<TxType>(null);
+  const [recording, setRecording] = useState<Audio.Recording | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [polling, setPolling] = useState(false);
+  const [review, setReview] = useState<PurchaseOut | null>(null);
+  const [form, setForm] = useState({ product_name: "", category: "", quantity: "1", unit_price: "0", total_amount: "0" });
+
+  const startRecording = async () => {
+    try {
+      await Audio.requestPermissionsAsync();
+      await Audio.setAudioModeAsync({ playsInSilentMode: true, staysActiveInBackground: false, shouldDuck: true, playThroughEarpiece: false });
+      const { recording: r } = await Audio.Recording.createAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+      setRecording(r);
+    } catch (e) {
+      Toast.show({ type: "error", text1: t("error"), text2: "Could not start recording" });
+    }
+  };
+
+  const stopAndUpload = async () => {
+    if (!recording || txType === null) return;
+    setUploading(true);
+    try {
+      await recording.stopAndUnloadAsync();
+      const uri = recording.getURI();
+      if (!uri) throw new Error("No recording URI");
+      const res = await uploadVoice(uri, txType);
+      setRecording(null);
+      setPolling(true);
+      let lastPurchase: PurchaseOut | null = null;
+      let ready = false;
+      for (let i = 0; i < 60; i++) {
+        await new Promise((r) => setTimeout(r, 1500));
+        lastPurchase = await getPurchase(res.purchase_id);
+        const ps = (lastPurchase as { processing_status?: string })?.processing_status;
+        if (lastPurchase?.status === "ready_for_review" || ps === "ready_for_review") {
+          setReview(lastPurchase);
+          setForm({
+            product_name: lastPurchase.product_name || "",
+            category: lastPurchase.category || "",
+            quantity: String(lastPurchase.quantity || 1),
+            unit_price: String(lastPurchase.unit_price ?? 0),
+            total_amount: String(lastPurchase.total_amount ?? 0),
+          });
+          ready = true;
+          break;
+        }
+      }
+      if (!ready && lastPurchase) {
+        setReview(lastPurchase);
+        setForm({
+          product_name: lastPurchase.product_name || "",
+          category: lastPurchase.category || "",
+          quantity: String(lastPurchase.quantity || 1),
+          unit_price: String(lastPurchase.unit_price ?? 0),
+          total_amount: String(lastPurchase.total_amount ?? 0),
+        });
+      }
+    } catch (e) {
+      Toast.show({ type: "error", text1: t("error"), text2: String(e) });
+    } finally {
+      setUploading(false);
+      setPolling(false);
+    }
+  };
+
+  const handleConfirm = async () => {
+    if (!review) return;
+    const qty = parseInt(form.quantity, 10) || 1;
+    const up = parseFloat(form.unit_price) || 0;
+    try {
+      await confirmPurchase(review.id, {
+        product_name: form.product_name || "—",
+        category: form.category || null,
+        quantity: qty,
+        unit_price: up,
+        total_amount: qty * up,
+      });
+      Toast.show({ type: "success", text1: t("confirm") });
+      setReview(null);
+    } catch (e) {
+      Toast.show({ type: "error", text1: t("error"), text2: String(e) });
+    }
+  };
+
+  return (
+    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <Text style={styles.label}>{t("selectType")}</Text>
+      <View style={styles.row}>
+        <TouchableOpacity
+          style={[styles.txBtn, txType === "buy" && styles.txBtnActive]}
+          onPress={() => setTxType("buy")}
+        >
+          <Text style={[styles.txBtnText, txType === "buy" && styles.txBtnTextActive]}>{t("buy")}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.txBtn, txType === "sell" && styles.txBtnActive]}
+          onPress={() => setTxType("sell")}
+        >
+          <Text style={[styles.txBtnText, txType === "sell" && styles.txBtnTextActive]}>{t("sell")}</Text>
+        </TouchableOpacity>
+      </View>
+
+      {!review ? (
+        <>
+          {!recording ? (
+            <TouchableOpacity
+              style={[styles.recordBtn, (!txType || uploading) && styles.recordBtnDisabled]}
+              onPress={startRecording}
+              disabled={!txType || uploading}
+            >
+              <Text style={styles.recordBtnText}>{uploading || polling ? (polling ? t("processing") : t("uploadRecord")) : t("recording")}</Text>
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity style={styles.stopBtn} onPress={stopAndUpload} disabled={uploading}>
+              {uploading ? <ActivityIndicator color="#fff" /> : <Text style={styles.stopBtnText}>{t("stopRecord")}</Text>}
+            </TouchableOpacity>
+          )}
+          {(uploading || polling) && (
+            <View style={styles.loading}>
+              <ActivityIndicator size="small" color={colors.primary} />
+              <Text style={styles.loadingText}>{t("processing")}</Text>
+            </View>
+          )}
+        </>
+      ) : (
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>{t("readyForReview")}</Text>
+          <TextInput style={styles.input} placeholder={t("productName")} value={form.product_name} onChangeText={(v) => setForm((f) => ({ ...f, product_name: v }))} placeholderTextColor={colors.textMuted} />
+          <TextInput style={styles.input} placeholder={t("category")} value={form.category} onChangeText={(v) => setForm((f) => ({ ...f, category: v }))} placeholderTextColor={colors.textMuted} />
+          <TextInput style={styles.input} placeholder={t("quantity")} value={form.quantity} onChangeText={(v) => setForm((f) => ({ ...f, quantity: v }))} keyboardType="numeric" placeholderTextColor={colors.textMuted} />
+          <TextInput style={styles.input} placeholder={t("unitPrice")} value={form.unit_price} onChangeText={(v) => setForm((f) => ({ ...f, unit_price: v }))} keyboardType="decimal-pad" placeholderTextColor={colors.textMuted} />
+          <TextInput style={styles.input} placeholder={t("totalAmount")} value={form.total_amount} onChangeText={(v) => setForm((f) => ({ ...f, total_amount: v }))} keyboardType="decimal-pad" placeholderTextColor={colors.textMuted} />
+          <TouchableOpacity style={styles.confirmBtn} onPress={handleConfirm}>
+            <Text style={styles.confirmBtnText}>{t("confirm")}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.cancelBtn} onPress={() => setReview(null)}>
+            <Text style={styles.cancelBtnText}>{t("retry")}</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+    </ScrollView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: colors.background },
+  content: { padding: 20, paddingBottom: 40 },
+  label: { fontSize: 16, color: colors.text, marginBottom: 12, fontWeight: "500" },
+  row: { flexDirection: "row", gap: 12, marginBottom: 24 },
+  txBtn: { flex: 1, padding: 16, borderRadius: 12, backgroundColor: colors.surfaceMuted, alignItems: "center" },
+  txBtnActive: { backgroundColor: colors.primary },
+  txBtnText: { fontSize: 16, color: colors.text },
+  txBtnTextActive: { color: "#fff", fontWeight: "600" },
+  recordBtn: { backgroundColor: colors.accent, padding: 20, borderRadius: 12, alignItems: "center", marginBottom: 12 },
+  recordBtnDisabled: { opacity: 0.6 },
+  recordBtnText: { color: "#fff", fontSize: 16, fontWeight: "600" },
+  stopBtn: { backgroundColor: colors.error, padding: 20, borderRadius: 12, alignItems: "center", marginBottom: 12 },
+  stopBtnText: { color: "#fff", fontSize: 16, fontWeight: "600" },
+  loading: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 8 },
+  loadingText: { color: colors.textMuted, fontSize: 14 },
+  card: { backgroundColor: colors.surface, borderRadius: 20, padding: 20, marginTop: 16 },
+  cardTitle: { fontSize: 18, fontWeight: "600", color: colors.primary, marginBottom: 16 },
+  input: { borderWidth: 1, borderColor: colors.border, borderRadius: 12, padding: 14, marginBottom: 12, fontSize: 16, color: colors.text },
+  confirmBtn: { backgroundColor: colors.primary, padding: 16, borderRadius: 12, alignItems: "center", marginTop: 8 },
+  confirmBtnText: { color: "#fff", fontSize: 16, fontWeight: "600" },
+  cancelBtn: { marginTop: 12, alignItems: "center" },
+  cancelBtnText: { color: colors.primary, fontSize: 14 },
+});

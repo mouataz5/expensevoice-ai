@@ -1,0 +1,20 @@
+# Enable after obtaining certificates (see README Production Deploy).
+# Rename to api.ssl.conf and mount LetsEncrypt volume to /etc/letsencrypt.
+# server {
+#     listen 443 ssl;
+#     server_name api.abesagrotech.tn;
+#     client_max_body_size 12M;
+#     ssl_certificate     /etc/letsencrypt/live/api.abesagrotech.tn/fullchain.pem;
+#     ssl_certificate_key /etc/letsencrypt/live/api.abesagrotech.tn/privkey.pem;
+#     include /etc/nginx/conf.d/ssl-params.conf;
+#     location / {
+#         proxy_pass http://backend:8000;
+#         proxy_set_header Host $host;
+#         proxy_set_header X-Real-IP $remote_addr;
+#         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+#         proxy_set_header X-Forwarded-Proto $scheme;
+#     }
+#     add_header X-Content-Type-Options "nosniff" always;
+#     add_header X-Frame-Options "DENY" always;
+#     add_header Referrer-Policy "no-referrer" always;
+# }

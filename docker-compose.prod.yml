@@ -1,0 +1,99 @@
+# Production Docker Compose — Abes AgroTech
+# Domains: app.abesagrotech.tn (frontend), api.abesagrotech.tn (backend)
+# Usage: docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+
+services:
+  nginx:
+    image: nginx:alpine
+    container_name: abes-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      # - "443:443"  # Uncomment when SSL is configured
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - certbot_www:/var/www/certbot:ro
+      # Mount after obtaining certs: - letsencrypt:/etc/letsencrypt:ro
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - abes-net
+
+  frontend:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: https://api.abesagrotech.tn
+    image: abes-frontend:prod
+    container_name: abes-frontend
+    restart: unless-stopped
+    networks:
+      - abes-net
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: abes-backend:prod
+    container_name: abes-backend
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - JWT_SECRET=${JWT_SECRET}
+      - CORS_ORIGINS=${CORS_ORIGINS}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - AUDIO_STORAGE_DIR=/data/audio
+      - INVOICE_STORAGE_DIR=/data/invoices
+    volumes:
+      - app_data:/data
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - abes-net
+
+  db:
+    image: postgres:16-alpine
+    container_name: abes-db
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-abes}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-abes}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-abes} -d ${POSTGRES_DB:-abes}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - abes-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: abes-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    networks:
+      - abes-net
+
+volumes:
+  db_data:
+  redis_data:
+  app_data:
+  certbot_www:
+
+networks:
+  abes-net:
+    driver: bridge

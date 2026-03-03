@@ -1,5 +1,7 @@
+import logging
 from uuid import UUID
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -14,6 +16,7 @@ from app.services.extraction import extract_purchase_fields, validate_and_saniti
 from app.services.rules import get_allowed_categories
 
 router = APIRouter(prefix="/purchases", tags=["llm-extraction"])
+logger = logging.getLogger(__name__)
 
 
 @router.post("/{purchase_id}/extract")
@@ -24,7 +27,9 @@ async def extract_from_transcription(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """Part 2: Extract with transaction_type; structured validation; server-side total."""
+    """Part 2: Extract with transaction_type; structured validation; server-side total.
+    If LLM (Ollama/OpenAI) is unreachable, set defaults and return fallback so user can review manually.
+    """
     purchase = db.execute(
         select(Purchase).where(Purchase.id == purchase_id, Purchase.is_deleted == False)
     ).scalar_one_or_none()
@@ -41,10 +46,48 @@ async def extract_from_transcription(
             detail="No transcription found on this purchase",
         )
 
-    extracted = await extract_purchase_fields(
-        purchase.transcription,
-        transaction_type=purchase.transaction_type,
-    )
+    try:
+        extracted = await extract_purchase_fields(
+            purchase.transcription,
+            transaction_type=purchase.transaction_type,
+        )
+    except (httpx.ConnectError, httpx.ConnectTimeout, Exception) as e:
+        logger.warning("LLM extraction failed for purchase %s, using defaults: %s", purchase_id, e)
+        # Fallback: set defaults so user can review and confirm manually
+        purchase.product_name = "(from_voice)"
+        purchase.category = None
+        purchase.quantity = 1
+        purchase.unit_price = 0.0
+        purchase.total_amount = 0.0
+        purchase.extraction_confidence = 0.0
+        purchase.status = "pending"
+        if getattr(purchase, "processing_status", None) == "processing":
+            purchase.processing_status = "ready_for_review"
+        db.add(purchase)
+        db.commit()
+        db.refresh(purchase)
+        audit_log(
+            db,
+            user=user,
+            action="purchase_extract_fallback",
+            entity_type="purchase",
+            entity_id=str(purchase.id),
+            message="LLM unreachable; defaults set for manual review",
+        )
+        return {
+            "purchase_id": str(purchase.id),
+            "extracted": {
+                "product_name": "(from_voice)",
+                "category": None,
+                "quantity": 1,
+                "unit_price": 0.0,
+                "total_amount": 0.0,
+                "confidence": 0.0,
+            },
+            "status": purchase.status,
+            "extraction_confidence": 0.0,
+            "fallback": True,
+        }
 
     allowed = get_allowed_categories(db)
     qty, price, total, ext_conf = validate_and_sanitize(extracted, allowed)

@@ -60,6 +60,27 @@ export async function downloadInvoicePdf(id: string, filename?: string): Promise
   URL.revokeObjectURL(a.href);
 }
 
+export type InvoicePreview = {
+  id: string;
+  status: string;
+  created_at: string;
+  ocr_text: string;
+  supplier_name: string | null;
+  invoice_number: string | null;
+  invoice_date: string | null;
+  currency: string;
+  items: { designation: string; quantity: number; unit_price: number; line_total: number }[];
+  totals: { htva: number | null; tva: number | null; ttc: number | null };
+  confidence: number;
+  transaction_type: string;
+  total_ttc: number | null;
+};
+
+export async function getInvoicePreview(id: string): Promise<InvoicePreview> {
+  const res = await api.get(`/invoices/${id}/preview`);
+  return res.data;
+}
+
 export async function approveInvoice(id: string): Promise<{ invoice_id: string; status: string; purchase_id: string }> {
   const res = await api.post(`/invoices/${id}/approve`);
   return res.data;

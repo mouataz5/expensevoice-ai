@@ -6,9 +6,11 @@ const base =
   (import.meta.env.DEV ? "" : "http://localhost:8000");
 const baseURL = `${base.replace(/\/?$/, "")}/api/v1`;
 
+// Let axios set the appropriate Content-Type per request:
+// - JSON: application/json
+// - FormData: multipart/form-data with boundary
 export const api = axios.create({
   baseURL,
-  headers: { "Content-Type": "application/json" },
 });
 
 api.interceptors.request.use((config) => {
