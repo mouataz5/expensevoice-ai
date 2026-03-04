@@ -1,389 +1,364 @@
 """
-Invoice extraction — LLM extracts structured data from OCR text.
-Tunisian invoices: French + Arabic; FACTURE, HTVA, TVA, TTC, etc.
-Output: supplier_name, invoice_number, invoice_date, items[], totals, currency.
+Invoice extraction service using LLM to parse OCR text and extract structured data.
+
+Extracts invoice fields from OCR text in Tunisian/French/Arabic invoices.
 """
 import json
 import logging
 import os
-from typing import Any
+import re
+from typing import Any, Dict, List, Optional
 
 import httpx
 
 logger = logging.getLogger(__name__)
 
-INVOICE_JSON_SCHEMA: dict[str, Any] = {
+# JSON schema for invoice extraction
+INVOICE_EXTRACTION_JSON_SCHEMA: Dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
     "properties": {
-        "supplier_name": {"type": ["string", "null"]},
-        "invoice_number": {"type": ["string", "null"]},
-        "invoice_date": {"type": ["string", "null"]},
-        "currency": {"type": "string"},
+        "supplier_name": {"type": "string"},
+        "invoice_number": {"type": "string"},
+        "invoice_date": {"type": "string", "pattern": r"^\d{4}-\d{2}-\d{2}$|^$"},  # YYYY-MM-DD
         "items": {
             "type": "array",
             "items": {
                 "type": "object",
                 "properties": {
                     "designation": {"type": "string"},
-                    "quantity": {"type": "number"},
-                    "unit_price": {"type": "number"},
-                    "line_total": {"type": "number"},
+                    "quantity": {"type": "number", "minimum": 0},
+                    "unit_price": {"type": "number", "minimum": 0},
+                    "line_total": {"type": "number", "minimum": 0}
                 },
-                "required": ["designation", "quantity", "unit_price", "line_total"],
-            },
+                "required": ["designation", "quantity", "unit_price", "line_total"]
+            }
         },
-        "totals": {
-            "type": "object",
-            "properties": {
-                "htva": {"type": ["number", "null"]},
-                "tva": {"type": ["number", "null"]},
-                "ttc": {"type": ["number", "null"]},
-            },
-        },
-        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "subtotal_htva": {"type": "number", "minimum": 0},
+        "tax_amount": {"type": "number", "minimum": 0},
+        "total_ttc": {"type": "number", "minimum": 0},
+        "currency": {"type": "string", "enum": ["TND", "EUR", "USD", "DZD", "MAD", "SAR", "AED", "EGP", ""]}
     },
-    "required": ["supplier_name", "invoice_number", "invoice_date", "currency", "items", "totals", "confidence"],
+    "required": ["items", "currency"]
 }
 
-SYSTEM_PROMPT = """You extract structured invoice data from OCR text. Tunisian invoices often use French and Arabic.
-Keywords: FACTURE, BON DE LIVRAISON, BON DE COMMANDE, HTVA, TVA, TTC, Montant, Quantité, Prix unitaire, Total.
-Arabic: فاتورة، رقم، تاريخ، المورد، الإجمالي.
+# System prompt for invoice extraction
+INVOICE_SYSTEM_PROMPT = """\
+Extract invoice data from Arabic/French text (Tunisian context). Output ONLY valid JSON.
 
-Rules:
-- Return ONLY valid JSON. No markdown, no explanation.
-- Do NOT invent data. If a field is missing or unclear, set it to null and lower confidence (below 0.7).
-- supplier_name: vendor/supplier name. invoice_number: number on invoice. invoice_date: ISO date or null.
-- items: array of line items with designation, quantity, unit_price, line_total.
-- totals: htva (HT), tva (TVA amount), ttc (TTC total). Use null if not found.
-- currency: usually TND for Tunisia.
-- confidence: 0-1. Lower if unsure or many nulls.
+Common Tunisian/French terms: FACTURE=invoice, BON DE LIVRAISON=delivery note, 
+FOURNISSEUR=supplier, CLIENT=customer, DESIGNATION=product description,
+QUANTITÉ=quantity, PRIX UNITAIRE=unit price, TOTAL LIGNE=line total,
+SOUS-TOTAL=subtotal (HTVA), TVA=tax, TOTAL TTC=total with tax,
+DEN=دينار (TND), EUROS=euros (EUR), DOLLARS=dollars (USD)
+
+Output format: {
+  "supplier_name": "string",
+  "invoice_number": "string", 
+  "invoice_date": "YYYY-MM-DD",
+  "items": [{"designation": "string", "quantity": number, "unit_price": number, "line_total": number}],
+  "subtotal_htva": number,
+  "tax_amount": number, 
+  "total_ttc": number,
+  "currency": "TND|EUR|USD|..."
+}
+
+Rules: If value unclear → use null. Never hallucinate numbers. No markdown, no text before/after JSON.
 """
 
+# JSON parsing helpers
+INVOICE_FIELDS = {"supplier_name", "invoice_number", "invoice_date", "items", "subtotal_htva", "tax_amount", "total_ttc", "currency"}
 
-def _provider() -> str:
-    return os.getenv("LLM_PROVIDER", "ollama").lower()
+
+def _unwrap_llm_obj(obj: Dict) -> Dict:
+    """
+    Some models wrap the result inside a list or dict key.
+    e.g. {"invoice": {...}} or {"result": {...}}
+    Detect and unwrap one level when the inner object has invoice fields.
+    """
+    WRAPPER_KEYS = (
+        "invoice", "result", "data", "document", "extraction", 
+        "output", "response", "parsed", "extracted"
+    )
+    # List wrapper: {"invoices": [{...}]}
+    for v in obj.values():
+        if isinstance(v, list) and v and isinstance(v[0], dict):
+            candidate = v[0]
+            if INVOICE_FIELDS & set(candidate.keys()):
+                return candidate
+    # Dict wrapper: {"invoice": {...}}
+    for k in WRAPPER_KEYS:
+        if k in obj and isinstance(obj[k], dict):
+            candidate = obj[k]
+            if INVOICE_FIELDS & set(candidate.keys()):
+                return candidate
+    return obj
 
 
-async def _extract_with_ollama(ocr_text: str, transaction_type: str) -> dict:
+def _parse_json_from_response(raw: str) -> Dict:
+    """Parse and normalize the first JSON object found in an LLM response."""
+    raw = raw.strip()
+    try:
+        obj = json.loads(raw)
+    except json.JSONDecodeError:
+        # Try to find JSON in the response
+        match = re.search(r"\{.*\}", raw, re.DOTALL)
+        if not match:
+            raise ValueError(f"No valid JSON in LLM response: {raw[:300]!r}")
+        obj = json.loads(match.group())
+
+    return _unwrap_llm_obj(obj)
+
+
+def _apply_invoice_defaults(obj: Dict) -> Dict:
+    """Apply safe fallback values for missing fields."""
+    obj.setdefault("supplier_name", "")
+    obj.setdefault("invoice_number", "")
+    obj.setdefault("invoice_date", "")
+    obj.setdefault("subtotal_htva", 0.0)
+    obj.setdefault("tax_amount", 0.0)
+    obj.setdefault("total_ttc", 0.0)
+    obj.setdefault("currency", "TND")
+    
+    # Ensure items is a list
+    if "items" not in obj or not isinstance(obj["items"], list):
+        obj["items"] = []
+    
+    # Validate and clean items
+    cleaned_items = []
+    for item in obj.get("items", []):
+        if isinstance(item, dict):
+            item.setdefault("designation", "")
+            item.setdefault("quantity", 0)
+            item.setdefault("unit_price", 0.0)
+            item.setdefault("line_total", 0.0)
+            # Recalculate line total if needed
+            if item["quantity"] and item["unit_price"]:
+                item["line_total"] = round(item["quantity"] * item["unit_price"], 3)
+            cleaned_items.append(item)
+    
+    obj["items"] = cleaned_items
+    
+    return obj
+
+
+def _fallback_invoice_extraction(ocr_text: str) -> Dict:
+    """Return safe defaults when LLM output is invalid."""
+    return {
+        "supplier_name": "",
+        "invoice_number": "",
+        "invoice_date": "",
+        "items": [],
+        "subtotal_htva": 0.0,
+        "tax_amount": 0.0,
+        "total_ttc": 0.0,
+        "currency": "TND",
+        "extraction_error": "Failed to parse invoice - manual review required"
+    }
+
+
+async def _extract_invoice_ollama(ocr_text: str, transaction_type: str) -> Dict:
+    """Extract invoice fields using Ollama."""
     base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
-    model = os.getenv("OLLAMA_MODEL", "qwen2.5:7b-instruct")
-    prompt = f"{SYSTEM_PROMPT}\n\nTransaction type: {transaction_type}\n\nOCR TEXT:\n{ocr_text}\n"
-    payload = {"model": model, "prompt": prompt, "stream": False, "format": "json"}
+    model = os.getenv("OLLAMA_MODEL", "aya:8b")
+
+    prompt = (
+        f"{INVOICE_SYSTEM_PROMPT}\n"
+        f"TRANSACTION TYPE: {transaction_type}\n"
+        f"OCR TEXT:\n{ocr_text}\n"
+    )
+
+    # Configure generation parameters for accuracy
+    num_predict = int(os.getenv("LLM_NUM_PREDICT", "320"))
+    temperature = float(os.getenv("LLM_TEMPERATURE", "0.1"))
+    options = {
+        "num_predict": num_predict,
+        "temperature": temperature,
+        "top_p": 0.9,
+        "repeat_penalty": 1.1,
+    }
+
     async with httpx.AsyncClient(timeout=90) as client:
-        r = await client.post(f"{base_url}/api/generate", json=payload)
+        r = await client.post(
+            f"{base_url}/api/generate",
+            json={
+                "model": model,
+                "prompt": prompt,
+                "stream": False,
+                "format": "json",
+                "options": options,
+            },
+        )
         r.raise_for_status()
-        data = r.json()
-    raw = data.get("response", "").strip()
-    return json.loads(raw)
+
+    raw = r.json().get("response", "").strip()
+    logger.debug("Ollama invoice extraction raw response → %s", raw[:400])
+    try:
+        obj = _apply_invoice_defaults(_parse_json_from_response(raw))
+        return obj
+    except (ValueError, KeyError, TypeError) as e:
+        logger.warning("Ollama invoice extraction parse failed (%s), using fallback", e)
+        return _fallback_invoice_extraction(ocr_text)
 
 
-async def _extract_with_openai(ocr_text: str, transaction_type: str) -> dict:
+async def _extract_invoice_openai(ocr_text: str, transaction_type: str) -> Dict:
+    """Extract invoice fields using OpenAI."""
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        raise RuntimeError("OPENAI_API_KEY missing")
+        raise RuntimeError("OPENAI_API_KEY is not set")
+
     model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+
+    user_content = f"TRANSACTION TYPE: {transaction_type}\nOCR TEXT:\n{ocr_text}"
+
     payload = {
         "model": model,
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": f"Transaction: {transaction_type}\n\nOCR TEXT:\n{ocr_text}\n"},
+            {"role": "system", "content": INVOICE_SYSTEM_PROMPT},
+            {"role": "user", "content": user_content},
         ],
         "response_format": {
             "type": "json_schema",
             "json_schema": {
                 "name": "invoice_extraction",
                 "strict": True,
-                "schema": INVOICE_JSON_SCHEMA,
+                "schema": INVOICE_EXTRACTION_JSON_SCHEMA,
             },
         },
     }
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+
     async with httpx.AsyncClient(timeout=60) as client:
         r = await client.post(
             "https://api.openai.com/v1/chat/completions",
-            headers=headers,
+            headers={"Authorization": f"Bearer {api_key}"},
             json=payload,
         )
         r.raise_for_status()
-        data = r.json()
-    content = data.get("choices", [{}])[0].get("message", {}).get("content")
+
+    content = (
+        r.json()
+        .get("choices", [{}])[0]
+        .get("message", {})
+        .get("content")
+    )
     if not content:
-        raise RuntimeError("OpenAI response missing content")
-    return json.loads(content)
-
-
-def _parse_tnd_amount(raw: str) -> float | None:
-    """
-    Parse Tunisian amount notation into a float.
-    Tunisian format: dots or commas as thousands separators, 3 decimal places (millimes).
-    Examples: "15.575.000" → 15575.0, "22 176,003" → 22176.003, "1.000" → 1.0
-    """
-    import re
-    cleaned = raw.strip().replace(" ", "").replace("\u00a0", "")
-    cleaned = re.sub(r"[^\d.,]", "", cleaned)
-    if not cleaned:
-        return None
-
-    dot_parts = cleaned.split(".")
-    if len(dot_parts) >= 3 and all(len(p) == 3 for p in dot_parts[1:]):
-        integer_part = "".join(dot_parts[:-1])
-        decimal_part = dot_parts[-1]
-        try:
-            return float(f"{integer_part}.{decimal_part}")
-        except ValueError:
-            pass
-
-    comma_parts = cleaned.split(",")
-    if len(comma_parts) >= 3 and all(len(p) == 3 for p in comma_parts[1:]):
-        integer_part = "".join(comma_parts[:-1])
-        decimal_part = comma_parts[-1]
-        try:
-            return float(f"{integer_part}.{decimal_part}")
-        except ValueError:
-            pass
-
-    if "," in cleaned and "." in cleaned:
-        if cleaned.rindex(",") > cleaned.rindex("."):
-            cleaned = cleaned.replace(".", "").replace(",", ".")
-        else:
-            cleaned = cleaned.replace(",", "")
-    elif "," in cleaned:
-        parts = cleaned.split(",")
-        if len(parts) == 2 and len(parts[-1]) == 3:
-            cleaned = cleaned.replace(",", ".")
-        else:
-            cleaned = cleaned.replace(",", ".")
-    elif "." in cleaned:
-        parts = cleaned.split(".")
-        if len(parts) == 2 and len(parts[-1]) == 3:
-            pass
-        elif len(parts) == 2 and len(parts[-1]) != 3:
-            pass
-
+        raise RuntimeError("OpenAI returned empty content")
     try:
-        return float(cleaned)
-    except ValueError:
-        return None
+        obj = _apply_invoice_defaults(json.loads(content))
+        return obj
+    except (ValueError, KeyError, TypeError, json.JSONDecodeError) as e:
+        logger.warning("OpenAI invoice extraction parse failed (%s), using fallback", e)
+        return _fallback_invoice_extraction(ocr_text)
 
 
-# Patterns for Tunisian amounts: "15.575.000" or "22 176,003" or "15,575,000"
-_TND_AMOUNT_PATTERNS = [
-    r"(?<!\d)\d{1,3}(?:\.\d{3}){2,}(?!\d)",   # 15.575.000 (dot thousands + millimes)
-    r"(?<!\d)\d{1,3}(?:,\d{3}){2,}(?!\d)",     # 15,575,000 (comma thousands + millimes)
-    r"(?<!\d)\d{1,3}(?:\s\d{3})+[.,]\d{3}(?!\d)",  # 22 176,003 (space thousands)
-    r"(?<!\d)\d+[.,]\d{3}(?!\d)",               # 22176,003 or 22176.003 (simple decimal)
-]
-
-
-def _find_tnd_amounts(text: str) -> list[float]:
-    """Find all Tunisian-formatted amounts in text."""
-    import re
-    result = []
-    seen_positions: set[int] = set()
-    for pat in _TND_AMOUNT_PATTERNS:
-        for m in re.finditer(pat, text):
-            if m.start() in seen_positions:
-                continue
-            seen_positions.add(m.start())
-            val = _parse_tnd_amount(m.group())
-            if val is not None and val > 0:
-                result.append(val)
-    return result
-
-
-def _regex_fallback(ocr_text: str) -> dict:
-    """Best-effort extraction using regex when LLM is unavailable."""
-    import re
-
-    text = ocr_text
-    lines = text.split("\n")
-    supplier = None
-    invoice_number = None
-    invoice_date = None
-    htva = None
-    tva = None
-    ttc = None
-
-    supplier_patterns = [
-        (r"SOCIETE\s*[:\-]?\s*\n?\s*(.+?)(?:\n|$)", 1),
-        (r"(SOCIET[EÉ]\s+[A-Z\s]+(?:STPA|SA|SARL|SUARL|SOCEP)[A-Z\s]*)", 1),
-        (r"(SOC\w*ET\w*\s*[:\-]?\s*\n?\s*.+?)(?:\n|$)", 1),
-        (r"(SOCEP\b.*?)(?:\n|$)", 1),
-        (r"(STE\s+DE\s+.+?)(?:\n|$)", 1),
-        (r"(SOC\w{2,}\s+.+?)(?:\n|$)", 1),
-        (r"(الشركة\s+.+?)(?:\n|$)", 1),
-        (r"(?:المورد|Fournisseur)\s*[:\-]?\s*(.+)", 1),
-    ]
-    for pat, grp in supplier_patterns:
-        m = re.search(pat, text, re.I | re.M)
-        if m:
-            val = m.group(grp).strip()
-            val = re.sub(r"[|_\-=]+$", "", val).strip()
-            if len(val) > 3:
-                supplier = val[:120]
-                break
-
-    for pat in [
-        r"(FA\d{2,}[/\-]\d{2,4})",
-        r"FAC[_\-]?\s*([\w\d/\-]+)",
-        r"N[°o]\s*(?:FACTURE)?\s*\n?\s*(FA?\d[\w/\-]+)",
-        r"Facture\s*[:\-]?\s*\n?\s*([A-Z0-9\-/]+)",
-    ]:
-        m = re.search(pat, text, re.I | re.M)
-        if m:
-            val = m.group(1).strip()[:30]
-            if len(val) >= 3 and re.search(r"\d", val):
-                invoice_number = val
-                break
-
-    m = re.search(r"(\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4})", text)
-    if m:
-        invoice_date = m.group(1)
-
-    def _labeled_amount(label: str) -> float | None:
-        """Find an amount on the same line or next line after a label."""
-        for i, line in enumerate(lines):
-            if re.search(label, line, re.I):
-                amounts = _find_tnd_amounts(line)
-                if amounts:
-                    return max(amounts)
-                if i + 1 < len(lines):
-                    amounts = _find_tnd_amounts(lines[i + 1])
-                    if amounts:
-                        return max(amounts)
-        return None
-
-    htva = (
-        _labeled_amount(r"TOTAL\s+HTVA") or _labeled_amount("HTVA")
-        or _labeled_amount("SOUS.TOTAL") or _labeled_amount("SOUS-TOTAL")
-    )
-    tva = _labeled_amount(r"TOTAL\s+TVA") or _labeled_amount(r"TAXE\s+TIMBRE")
-    ttc = (
-        _labeled_amount(r"TOTAL\s+TTC") or _labeled_amount("TTC")
-        or _labeled_amount("PAIMENTS?\s+RECUS?") or _labeled_amount("MONTANT\s+TOTAL")
-    )
-
-    if not ttc:
-        all_amounts = _find_tnd_amounts(text)
-        if all_amounts:
-            ttc = max(all_amounts)
-
-    if not ttc:
-        space_nums = re.findall(r"(?<!\d)(\d{1,3}(?:\s\d{3})+)(?!\d)", text)
-        candidates = []
-        for sn in space_nums:
-            val = _parse_tnd_amount(sn)
-            if val and val > 100:
-                candidates.append(val)
-        if candidates:
-            ttc = max(candidates)
-
-    items: list[dict] = []
-    skip_labels = re.compile(
-        r"sous.total|total|htva|ttc|tva|timbre|paiment|facture|delais|concerne|"
-        r"assiette|droit|taux|arrêt|vingt|mille|poids|remise|reste",
-        re.I,
-    )
-    for line in lines:
-        if skip_labels.search(line):
-            continue
-        amounts = _find_tnd_amounts(line)
-
-        clean_line = line
-        for pat in _TND_AMOUNT_PATTERNS:
-            clean_line = re.sub(pat, " ", clean_line)
-        plain_ints = re.findall(r"(?<!\d)(\d{2,6})(?!\d)", clean_line)
-        plain_vals = []
-        for pi in plain_ints:
-            try:
-                v = float(pi)
-                if 1 < v < 1_000_000:
-                    plain_vals.append(v)
-            except ValueError:
-                pass
-
-        all_nums = plain_vals + amounts
-        if len(all_nums) >= 2 and amounts:
-            desig_part = re.split(r"\d", line, maxsplit=1)[0].strip()
-            if not desig_part or len(desig_part) < 3:
-                desig_part = re.sub(r"[\d\s.,|]+", " ", line).strip()[:80]
-            alpha_count = sum(1 for c in desig_part if c.isalpha())
-            if alpha_count >= 3:
-                best_total = max(amounts)
-                if plain_vals and len(plain_vals) >= 2:
-                    plain_vals.sort()
-                    def _check_match(pu: float, qty: float, total: float) -> bool:
-                        for divisor in (1, 1000):
-                            expected = (pu * qty) / divisor
-                            if abs(expected - total) < total * 0.05:
-                                return True
-                        return False
-                    pu_a, qty_a = plain_vals[0], plain_vals[-1]
-                    pu_b, qty_b = plain_vals[-1], plain_vals[0]
-                    if _check_match(pu_a, qty_a, best_total):
-                        unit_price, quantity = pu_a, qty_a
-                    elif _check_match(pu_b, qty_b, best_total):
-                        unit_price, quantity = pu_b, qty_b
-                    else:
-                        unit_price, quantity = plain_vals[0], plain_vals[-1]
-                elif plain_vals:
-                    unit_price = plain_vals[0]
-                    quantity = round(best_total / unit_price) if unit_price else 1
-                else:
-                    unit_price = best_total
-                    quantity = 1
-
-                items.append({
-                    "designation": desig_part.strip()[:60],
-                    "quantity": quantity or 1,
-                    "unit_price": unit_price or best_total,
-                    "line_total": best_total,
-                })
-
-    found_count = sum([bool(supplier), bool(invoice_number), bool(ttc), len(items) > 0])
-    confidence = min(0.65, 0.16 * found_count) if found_count else 0.05
-
-    return {
-        "supplier_name": supplier,
-        "invoice_number": invoice_number,
-        "invoice_date": invoice_date,
-        "currency": "TND",
-        "items": items[:20],
-        "totals": {"htva": htva, "tva": tva, "ttc": ttc},
-        "confidence": confidence,
-    }
-
-
-async def extract_invoice_from_ocr(ocr_text: str, transaction_type: str) -> tuple[dict, float]:
+async def _extract_invoice_mcp(ocr_text: str, transaction_type: str) -> Dict:
     """
-    Extract structured invoice JSON from OCR text.
-    Priority: LLM (Ollama/OpenAI) → regex fallback.
-    Returns (extracted_dict, confidence).
+    Call EXTRACTION_MCP_URL with POST {"ocr_text": "...", "transaction_type": "sell"|"buy"}.
+    Response must be JSON with invoice fields.
     """
-    if not ocr_text or not ocr_text.strip():
-        return {
-            "supplier_name": None,
-            "invoice_number": None,
-            "invoice_date": None,
-            "currency": "TND",
-            "items": [],
-            "totals": {"htva": None, "tva": None, "ttc": None},
-            "confidence": 0.0,
-        }, 0.0
-
-    prov = _provider()
+    url = os.getenv("EXTRACTION_MCP_URL", "").strip()
+    if not url:
+        raise RuntimeError("EXTRACTION_MCP_URL is not set when using LLM_PROVIDER=mcp")
+    
+    payload = {"ocr_text": ocr_text, "transaction_type": transaction_type}
+    headers = {"Content-Type": "application/json"}
+    
     try:
-        if prov == "ollama":
-            obj = await _extract_with_ollama(ocr_text, transaction_type)
-        elif prov == "openai":
-            obj = await _extract_with_openai(ocr_text, transaction_type)
-        else:
-            raise RuntimeError(f"Unknown LLM_PROVIDER: {prov}")
-        conf = float(obj.get("confidence", 0.5))
-        return obj, max(0.0, min(1.0, conf))
+        extra = os.getenv("EXTRACTION_MCP_HEADERS")
+        if extra:
+            headers.update(json.loads(extra))
+    except json.JSONDecodeError:
+        pass
+    
+    async with httpx.AsyncClient(timeout=60) as client:
+        r = await client.post(url, json=payload, headers=headers)
+        r.raise_for_status()
+    
+    data = r.json()
+    if not isinstance(data, dict):
+        return _fallback_invoice_extraction(ocr_text)
+    
+    obj = _apply_invoice_defaults(_unwrap_llm_obj(data))
+    return obj
+
+
+async def _extract_invoice_groq(ocr_text: str, transaction_type: str) -> Dict:
+    """Extract invoice fields using Groq."""
+    from groq import Groq
+    import os
+    
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        raise RuntimeError("GROQ_API_KEY is not set")
+    
+    model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+    
+    client = Groq(api_key=api_key)
+    
+    user_content = f"TRANSACTION TYPE: {transaction_type}\nOCR TEXT:\n{ocr_text}"
+    
+    try:
+        chat_completion = client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": INVOICE_SYSTEM_PROMPT},
+                {"role": "user", "content": user_content},
+            ],
+            model=model,
+            response_format={"type": "json_object"},  # Request JSON format
+        )
+        
+        content = chat_completion.choices[0].message.content
+        if not content:
+            raise RuntimeError("Groq returned empty content")
+        
+        obj = _apply_invoice_defaults(json.loads(content))
+        return obj
     except Exception as e:
-        logger.warning("LLM extraction failed, using regex fallback: %s", e)
-        obj = _regex_fallback(ocr_text)
-        conf = float(obj.get("confidence", 0.1))
-        return obj, conf
+        logger.warning("Groq invoice extraction failed (%s), using fallback", e)
+        return _fallback_invoice_extraction(ocr_text)
+
+
+async def extract_invoice_fields(ocr_text: str, transaction_type: str) -> Dict:
+    """
+    Extract structured invoice fields from OCR text using LLM.
+    
+    transaction_type: "sell" | "buy" — context for better accuracy.
+    Provider: LLM_PROVIDER env var (ollama | openai | mcp | groq | fallback).
+    """
+    provider = os.getenv("LLM_PROVIDER", "ollama").lower()
+    
+    try:
+        if provider == "ollama":
+            return await _extract_invoice_ollama(ocr_text, transaction_type)
+        elif provider == "openai":
+            return await _extract_invoice_openai(ocr_text, transaction_type)
+        elif provider == "mcp":
+            try:
+                return await _extract_invoice_mcp(ocr_text, transaction_type)
+            except Exception as e:
+                logger.warning("MCP invoice extraction failed (%s), using fallback", e)
+                return _fallback_invoice_extraction(ocr_text)
+        elif provider == "groq":
+            return await _extract_invoice_groq(ocr_text, transaction_type)
+        elif provider == "fallback":
+            # Return a simple fallback when no LLM provider is configured
+            logger.info("Using fallback extraction (no LLM provider configured)")
+            return _apply_invoice_defaults({
+                "items": [],
+                "currency": "TND",
+                "extraction_method": "fallback_due_to_no_provider"
+            })
+        else:
+            raise RuntimeError(f"Unknown LLM_PROVIDER: {provider!r}")
+    except Exception as e:
+        logger.error(f"LLM extraction failed for provider {provider}: {e}")
+        # Check if this is an import error (missing dependencies) and provide appropriate fallback
+        if provider == "ollama":
+            logger.warning("Ollama not available, likely missing dependencies. Using fallback.")
+        elif provider == "groq":
+            logger.warning("Groq not available, likely missing dependencies. Using fallback.")
+        elif provider == "openai":
+            logger.warning("OpenAI not available, likely missing dependencies. Using fallback.")
+        
+        # Always return a safe fallback instead of failing completely
+        return _fallback_invoice_extraction(ocr_text)
