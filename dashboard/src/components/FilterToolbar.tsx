@@ -125,13 +125,16 @@ export function FilterToolbar({
 
       {statusOptions && status !== undefined && onStatusChange && (
         <div className="space-y-1 w-40">
-          <Select value={status} onValueChange={onStatusChange}>
+          <Select
+            value={status || "__all__"}
+            onValueChange={(v) => onStatusChange(v === "__all__" ? "" : v)}
+          >
             <SelectTrigger className="rounded-xl">
               <SelectValue placeholder={statusPlaceholder ?? "الحالة"} />
             </SelectTrigger>
             <SelectContent>
               {statusOptions.map((opt) => (
-                <SelectItem key={opt.value} value={opt.value}>
+                <SelectItem key={opt.value || "__all__"} value={opt.value || "__all__"}>
                   {opt.label}
                 </SelectItem>
               ))}

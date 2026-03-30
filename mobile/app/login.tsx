@@ -14,14 +14,15 @@ import Toast from "react-native-toast-message";
 import { useAuth } from "../src/context/AuthContext";
 import { useLocale } from "../src/context/LocaleContext";
 import { login } from "../src/api/auth";
+import { setPendingToken } from "../src/api/client";
 import { colors } from "../src/theme/colors";
 
 export default function LoginScreen() {
   const { t } = useLocale();
   const { setUser, setToken } = useAuth();
   const router = useRouter();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [email, setEmail] = useState("admin@company.com");
+  const [password, setPassword] = useState("Admin12345!");
   const [loading, setLoading] = useState(false);
 
   const handleLogin = async () => {
@@ -32,13 +33,17 @@ export default function LoginScreen() {
     setLoading(true);
     try {
       const { access_token } = await login({ email: email.trim(), password });
+      setPendingToken(access_token);
       const { getMe } = await import("../src/api/auth");
       const user = await getMe();
+      setPendingToken(null);
       setToken(access_token);
       setUser(user);
       Toast.show({ type: "success", text1: t("login") });
-      router.replace("/(tabs)");
+      const isAdminOrDirector = user?.role === "admin" || user?.role === "director";
+      router.replace(isAdminOrDirector ? "/(tabs-director)" : "/(tabs)");
     } catch (err: unknown) {
+      setPendingToken(null);
       const msg = err && typeof err === "object" && "response" in err
         ? (err as { response?: { data?: { detail?: string } } }).response?.data?.detail
         : "Invalid credentials";
@@ -79,11 +84,13 @@ export default function LoginScreen() {
           style={[styles.button, loading && styles.buttonDisabled]}
           onPress={handleLogin}
           disabled={loading}
+          accessibilityRole="button"
+          accessibilityLabel={t("login")}
         >
           {loading ? (
             <ActivityIndicator color="#fff" />
           ) : (
-            <Text style={styles.buttonText}>{t("login")}</Text>
+            <Text style={styles.buttonText} pointerEvents="none">{t("login")}</Text>
           )}
         </TouchableOpacity>
         <TouchableOpacity

@@ -15,6 +15,16 @@ export async function listMyAlerts(): Promise<AlertOut[]> {
   return data;
 }
 
+/** Admin/Director: list all alerts. */
+export async function listAllAlerts(): Promise<AlertOut[]> {
+  const { data } = await api.get<AlertOut[]>("/alerts");
+  return data;
+}
+
+export async function resolveAlert(alertId: string): Promise<void> {
+  await api.post(`/alerts/${alertId}/resolve`);
+}
+
 export async function getAlert(id: string): Promise<AlertOut> {
   const { data } = await api.get<AlertOut>(`/alerts/${id}`);
   return data;

@@ -41,7 +41,7 @@
         { "photosPermission": "Allow Abes AgroTech to access your photos to upload invoice images." }
       ],
       [
-        "expo-av",
+        "expo-audio",
         { "microphonePermission": "Allow Abes AgroTech to record voice for purchases." }
       ]
     ]
