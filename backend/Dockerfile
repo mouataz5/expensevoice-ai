@@ -3,9 +3,13 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# System deps for psycopg, optional audio/OCR
+# System deps for psycopg + invoice OCR (align with Dockerfile.dev)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
+    tesseract-ocr \
+    tesseract-ocr-fra \
+    tesseract-ocr-eng \
+    tesseract-ocr-ara \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState } from "react";
 import {
   View,
   Text,
@@ -7,20 +7,28 @@ import {
   ActivityIndicator,
   TextInput,
   ScrollView,
-  Alert,
 } from "react-native";
 import { useLocale } from "../../src/context/LocaleContext";
 import { colors } from "../../src/theme/colors";
 import { uploadVoice, getPurchase, confirmPurchase, type PurchaseOut } from "../../src/api/purchases";
 import Toast from "react-native-toast-message";
-import { Audio } from "expo-av";
+import {
+  useAudioRecorder,
+  useAudioRecorderState,
+  RecordingPresets,
+  AudioModule,
+  setAudioModeAsync,
+} from "expo-audio";
 
 type TxType = "buy" | "sell" | null;
 
 export default function RecordScreen() {
   const { t } = useLocale();
   const [txType, setTxType] = useState<TxType>(null);
-  const [recording, setRecording] = useState<Audio.Recording | null>(null);
+  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  /** `recorder.isRecording` alone does not re-render; expo-audio expects this hook for UI. */
+  const recorderState = useAudioRecorderState(recorder, 250);
+  const isRecording = recorderState.isRecording;
   const [uploading, setUploading] = useState(false);
   const [polling, setPolling] = useState(false);
   const [review, setReview] = useState<PurchaseOut | null>(null);
@@ -28,24 +36,41 @@ export default function RecordScreen() {
 
   const startRecording = async () => {
     try {
-      await Audio.requestPermissionsAsync();
-      await Audio.setAudioModeAsync({ playsInSilentMode: true, staysActiveInBackground: false, shouldDuck: true, playThroughEarpiece: false });
-      const { recording: r } = await Audio.Recording.createAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
-      setRecording(r);
+      const status = await AudioModule.requestRecordingPermissionsAsync();
+      if (!status.granted) {
+        Toast.show({ type: "error", text1: t("error"), text2: "Microphone permission denied" });
+        return;
+      }
+      // iOS: session must allow recording (otherwise native layer rejects / no audio).
+      await setAudioModeAsync({
+        allowsRecording: true,
+        playsInSilentMode: true,
+        interruptionMode: "doNotMix",
+      });
+      await recorder.prepareToRecordAsync();
+      recorder.record();
     } catch (e) {
-      Toast.show({ type: "error", text1: t("error"), text2: "Could not start recording" });
+      Toast.show({
+        type: "error",
+        text1: t("error"),
+        text2: e instanceof Error ? e.message : "Could not start recording",
+      });
+      try {
+        await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
+      } catch {
+        /* ignore */
+      }
     }
   };
 
   const stopAndUpload = async () => {
-    if (!recording || txType === null) return;
+    if (!recorder.getStatus().isRecording || txType === null) return;
     setUploading(true);
     try {
-      await recording.stopAndUnloadAsync();
-      const uri = recording.getURI();
+      await recorder.stop();
+      const uri = recorder.uri ?? recorder.getStatus().url;
       if (!uri) throw new Error("No recording URI");
       const res = await uploadVoice(uri, txType);
-      setRecording(null);
       setPolling(true);
       let lastPurchase: PurchaseOut | null = null;
       let ready = false;
@@ -81,6 +106,11 @@ export default function RecordScreen() {
     } finally {
       setUploading(false);
       setPolling(false);
+      try {
+        await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
+      } catch {
+        /* ignore */
+      }
     }
   };
 
@@ -110,30 +140,36 @@ export default function RecordScreen() {
         <TouchableOpacity
           style={[styles.txBtn, txType === "buy" && styles.txBtnActive]}
           onPress={() => setTxType("buy")}
+          accessibilityLabel={t("buy")}
+          accessibilityRole="button"
         >
-          <Text style={[styles.txBtnText, txType === "buy" && styles.txBtnTextActive]}>{t("buy")}</Text>
+          <Text style={[styles.txBtnText, txType === "buy" && styles.txBtnTextActive]} pointerEvents="none">{t("buy")}</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.txBtn, txType === "sell" && styles.txBtnActive]}
           onPress={() => setTxType("sell")}
+          accessibilityLabel={t("sell")}
+          accessibilityRole="button"
         >
-          <Text style={[styles.txBtnText, txType === "sell" && styles.txBtnTextActive]}>{t("sell")}</Text>
+          <Text style={[styles.txBtnText, txType === "sell" && styles.txBtnTextActive]} pointerEvents="none">{t("sell")}</Text>
         </TouchableOpacity>
       </View>
 
       {!review ? (
         <>
-          {!recording ? (
+          {!isRecording ? (
             <TouchableOpacity
               style={[styles.recordBtn, (!txType || uploading) && styles.recordBtnDisabled]}
               onPress={startRecording}
               disabled={!txType || uploading}
+              accessibilityLabel={uploading || polling ? (polling ? t("processing") : t("uploadRecord")) : t("record")}
+              accessibilityRole="button"
             >
-              <Text style={styles.recordBtnText}>{uploading || polling ? (polling ? t("processing") : t("uploadRecord")) : t("recording")}</Text>
+              <Text style={styles.recordBtnText} pointerEvents="none">{uploading || polling ? (polling ? t("processing") : t("uploadRecord")) : t("record")}</Text>
             </TouchableOpacity>
           ) : (
-            <TouchableOpacity style={styles.stopBtn} onPress={stopAndUpload} disabled={uploading}>
-              {uploading ? <ActivityIndicator color="#fff" /> : <Text style={styles.stopBtnText}>{t("stopRecord")}</Text>}
+            <TouchableOpacity style={styles.stopBtn} onPress={stopAndUpload} disabled={uploading} accessibilityLabel={t("stopRecord")} accessibilityRole="button">
+              {uploading ? <ActivityIndicator color="#fff" /> : <Text style={styles.stopBtnText} pointerEvents="none">{t("stopRecord")}</Text>}
             </TouchableOpacity>
           )}
           {(uploading || polling) && (

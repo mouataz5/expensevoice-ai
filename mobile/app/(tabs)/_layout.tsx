@@ -39,6 +39,13 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
+        name="invoices"
+        options={{
+          title: t("myInvoices"),
+          tabBarIcon: ({ color, size }) => <Ionicons name="receipt" size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
         name="purchases"
         options={{
           title: t("myPurchases"),
@@ -59,6 +66,8 @@ export default function TabsLayout() {
           tabBarIcon: ({ color, size }) => <Ionicons name="person" size={size} color={color} />,
         }}
       />
+      <Tabs.Screen name="invoice/[id]" options={{ href: null }} />
+      <Tabs.Screen name="purchases/[id]" options={{ href: null }} />
     </Tabs>
   );
 }

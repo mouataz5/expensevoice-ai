@@ -22,7 +22,14 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#14532D"
       },
-      "package": "tn.abesagrotech.app"
+      "package": "tn.abesagrotech.app",
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -34,16 +41,28 @@
       "expo-secure-store",
       [
         "expo-camera",
-        { "cameraPermission": "Allow Abes AgroTech to access your camera to scan invoices." }
+        {
+          "cameraPermission": "Allow Abes AgroTech to access your camera to scan invoices."
+        }
       ],
       [
         "expo-image-picker",
-        { "photosPermission": "Allow Abes AgroTech to access your photos to upload invoice images." }
+        {
+          "photosPermission": "Allow Abes AgroTech to access your photos to upload invoice images."
+        }
       ],
       [
-        "expo-av",
-        { "microphonePermission": "Allow Abes AgroTech to record voice for purchases." }
+        "expo-audio",
+        {
+          "microphonePermission": "Allow Abes AgroTech to record voice for purchases."
+        }
       ]
-    ]
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "acd6cd75-ee48-4858-88fb-070d870e6f56"
+      }
+    }
   }
 }

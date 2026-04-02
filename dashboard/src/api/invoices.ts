@@ -74,7 +74,7 @@ export type InvoicePreview = {
   confidence: number;
   transaction_type: string;
   total_ttc: number | null;
-  extraction_error?: string;
+  extraction_error?: string | null;
 };
 
 export async function getInvoicePreview(id: string): Promise<InvoicePreview> {

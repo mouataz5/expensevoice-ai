@@ -53,6 +53,20 @@ export default function DirectorTabsLayout() {
         }}
       />
       <Tabs.Screen
+        name="policies"
+        options={{
+          title: t("policiesTab"),
+          tabBarIcon: ({ color, size }) => <Ionicons name="shield-checkmark" size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="audit"
+        options={{
+          title: t("auditTab"),
+          tabBarIcon: ({ color, size }) => <Ionicons name="reader" size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
         name="settings"
         options={{
           title: t("settings"),

@@ -519,6 +519,17 @@ def generate_invoice_report_pdf(
     htva = totals.get("htva")
     tva = totals.get("tva")
     timbre = totals.get("timbre") or totals.get("stamp") or None
+    try:
+        if timbre is not None and float(timbre) <= 0:
+            timbre = None
+    except (TypeError, ValueError):
+        timbre = None
+    if timbre is None:
+        try:
+            sd = float(extracted.get("stamp_duty") or 0)
+            timbre = sd if sd > 0 else None
+        except (TypeError, ValueError):
+            pass
     ttc = totals.get("ttc")
     if ttc is None and items:
         try:

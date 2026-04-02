@@ -30,16 +30,46 @@ export async function getPurchase(id: string): Promise<PurchaseOut> {
   return data;
 }
 
-/** Upload voice recording. audioUri from expo-av recording. */
+export type PurchaseAlertRow = {
+  id: string;
+  alert_type: string;
+  message: string;
+  severity: string;
+  status: string;
+  created_at: string | null;
+};
+
+export async function fetchPurchaseAlerts(id: string): Promise<PurchaseAlertRow[]> {
+  const { data } = await api.get<PurchaseAlertRow[]>(`/purchases/${id}/alerts`);
+  return data;
+}
+
+export async function extractPurchase(id: string): Promise<{ extracted: Record<string, unknown> }> {
+  const { data } = await api.post<{ extracted: Record<string, unknown> }>(`/purchases/${id}/extract`);
+  return data;
+}
+
+const AUDIO_MIME: Record<string, string> = {
+  ".m4a": "audio/mp4",
+  ".mp4": "audio/mp4",
+  ".mp3": "audio/mpeg",
+  ".wav": "audio/wav",
+  ".ogg": "audio/ogg",
+  ".webm": "audio/webm",
+};
+
+/** Upload voice recording. audioUri from expo-audio (e.g. file:///.../recording-xxx.m4a). */
 export async function uploadVoice(
   audioUri: string,
   transactionType: "sell" | "buy"
 ): Promise<RecordResponse> {
   const formData = new FormData();
-  const filename = audioUri.split("/").pop() || "recording.webm";
+  const filename = audioUri.split("/").pop() || "recording.m4a";
+  const ext = filename.includes(".") ? filename.slice(filename.lastIndexOf(".")).toLowerCase() : ".m4a";
+  const mime = AUDIO_MIME[ext] ?? "audio/mp4";
   formData.append("audio", {
     uri: audioUri,
-    type: "audio/webm",
+    type: mime,
     name: filename,
   } as unknown as Blob);
   formData.append("transaction_type", transactionType);
