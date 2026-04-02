@@ -2,13 +2,23 @@ import os
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from slowapi import _rate_limit_exceeded_handler
-from slowapi.errors import RateLimitExceeded
+try:
+    from slowapi import _rate_limit_exceeded_handler
+    from slowapi.errors import RateLimitExceeded
+    from app.core.rate_limit import limiter as _limiter
+    _SLOWAPI_AVAILABLE = True
+except ImportError:
+    _SLOWAPI_AVAILABLE = False
+    _limiter = None  # type: ignore
 
 from app.api.v1 import router as v1_router
 from app.core.config import APP_VERSION, CORS_ORIGINS
 from app.core.logging_config import setup_structured_logging
-from app.core.rate_limit import limiter
+
+try:
+    from app.core.rate_limit import limiter
+except ImportError:
+    limiter = None  # type: ignore
 from app.core.seed import seed_admin, seed_director, seed_employee, seed_policies, seed_settings
 from app.db.base import Base
 from app.db.session import SessionLocal, engine
@@ -28,8 +38,9 @@ setup_structured_logging(json_logs=_json_logs)
 
 app = FastAPI(title="ExpenseVoice AI API", version=APP_VERSION)
 
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+if _SLOWAPI_AVAILABLE and limiter:
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(RequestLoggingMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)

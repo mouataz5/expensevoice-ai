@@ -9,6 +9,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
+# Strip all --hash=... (inline and whole lines) to avoid mismatch when PyPI re-releases packages
+RUN sed -i 's/ *--hash=sha256:[a-f0-9]*//g' requirements.txt && \
+    sed -i '/^[[:space:]]*--hash=sha256:[a-f0-9]*[[:space:]]*$/d' requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .

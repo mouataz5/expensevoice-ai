@@ -70,6 +70,7 @@ def run_ocr_extract_pdf(
                 "items": [],
                 "totals": {"htva": None, "tva": None, "ttc": None},
                 "confidence": 0.0,
+                "extraction_error": "no_ocr_text",  # hint for UI: no text detected from image
             }
             inv.extracted_json = extracted
             inv.extraction_confidence = 0.0

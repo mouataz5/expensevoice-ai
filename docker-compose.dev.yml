@@ -1,0 +1,58 @@
+# Dev local — build et run via Docker (stack expensevoice-ai, modèles déjà installés)
+# Usage: .\scripts\dev-docker-up.ps1   OU   docker compose -f docker-compose.dev.yml up -d --build
+# Frontend: http://localhost:3000  |  Backend API: http://localhost:8000
+# Arrêt: docker compose -f docker-compose.dev.yml -p expensevoice-ai down
+
+name: expensevoice-ai
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: expensevoice
+    ports:
+      - "5434:5432"   # 5434 sur l'hôte pour éviter conflit avec PostgreSQL local ou autre conteneur
+    volumes:
+      - expensevoice_pg_dev:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d expensevoice"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: expensevoice-backend:dev
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@db:5432/expensevoice
+      JWT_SECRET: dev-secret-change-in-prod
+      CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
+      LLM_PROVIDER: groq
+    env_file:
+      - ./backend/.env.example
+    volumes:
+      - ./backend/storage:/app/storage
+    depends_on:
+      db:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: http://localhost:8000
+    image: expensevoice-frontend:dev
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+
+volumes:
+  expensevoice_pg_dev:

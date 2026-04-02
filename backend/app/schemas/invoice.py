@@ -62,6 +62,7 @@ def invoice_to_preview(inv: Any) -> dict:
         "confidence": float(inv.extraction_confidence) if inv.extraction_confidence else 0.0,
         "transaction_type": inv.transaction_type,
         "total_ttc": float(inv.total_ttc) if inv.total_ttc is not None else None,
+        "extraction_error": extracted.get("extraction_error"),
     }
 
 

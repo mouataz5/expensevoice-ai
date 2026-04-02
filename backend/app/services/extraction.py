@@ -129,6 +129,57 @@ async def extract_with_openai(
     return ExtractedPurchase(**obj)
 
 
+async def extract_with_groq(
+    transcription: str,
+    transaction_type: str | None = None,
+) -> ExtractedPurchase:
+    """Extract using Groq API (OpenAI-compatible). Uses JSON mode for reliable output."""
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        raise RuntimeError("GROQ_API_KEY missing")
+    model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+    system = build_system_prompt(transaction_type)
+    schema_hint = json.dumps(EXTRACTION_JSON_SCHEMA, ensure_ascii=False)
+    user_content = (
+        f"TRANSCRIPTION:\n{transcription}\n\n"
+        f"Return ONLY a JSON object matching this schema:\n{schema_hint}"
+    )
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_content},
+        ],
+        "temperature": 0.1,
+        "response_format": {"type": "json_object"},
+    }
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    async with httpx.AsyncClient(timeout=60) as client:
+        r = await client.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers=headers,
+            json=payload,
+        )
+        r.raise_for_status()
+        data = r.json()
+    content = data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+    if not content:
+        raise RuntimeError("Groq response missing content")
+    obj = json.loads(content)
+    # Provide safe defaults for any missing fields
+    obj.setdefault("product_name", "inconnu")
+    obj.setdefault("category", "autre")
+    obj.setdefault("quantity", 1)
+    obj.setdefault("unit_price", 0.0)
+    obj.setdefault("total_amount", 0.0)
+    obj.setdefault("currency", "TND")
+    obj.setdefault("confidence", 0.5)
+    return ExtractedPurchase(**obj)
+
+
 async def extract_purchase_fields(
     transcription: str,
     transaction_type: str | None = None,
@@ -139,6 +190,8 @@ async def extract_purchase_fields(
         return await extract_with_ollama(transcription, transaction_type)
     if prov == "openai":
         return await extract_with_openai(transcription, transaction_type)
+    if prov == "groq":
+        return await extract_with_groq(transcription, transaction_type)
     raise RuntimeError(f"Unknown LLM_PROVIDER: {prov}")
 
 

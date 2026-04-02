@@ -32,7 +32,7 @@ import {
 export default function InvoiceReview() {
   const qc = useQueryClient();
   const meQ = useQuery({ queryKey: ["me"], queryFn: fetchMe });
-  const [statusFilter, setStatusFilter] = useState<string>("");
+  const [statusFilter, setStatusFilter] = useState<string>("all");
   const [rejectReason, setRejectReason] = useState("");
   const [rejectId, setRejectId] = useState<string | null>(null);
   const [previewId, setPreviewId] = useState<string | null>(null);
@@ -42,7 +42,7 @@ export default function InvoiceReview() {
     queryKey: ["invoices", statusFilter],
     queryFn: () =>
       listInvoices({
-        status: statusFilter || undefined,
+        status: statusFilter === "all" ? undefined : statusFilter,
         limit: 100,
       }),
     enabled: meQ.data?.role === "admin" || meQ.data?.role === "director",
@@ -80,7 +80,7 @@ export default function InvoiceReview() {
 
       <FilterToolbar
         statusOptions={[
-          { value: "", label: "جميع الحالات" },
+          { value: "all", label: "جميع الحالات" },
           { value: "processing", label: "قيد المعالجة" },
           { value: "ready", label: "جاهز" },
           { value: "approved", label: "معتمدة" },
@@ -89,7 +89,7 @@ export default function InvoiceReview() {
         ]}
         status={statusFilter}
         onStatusChange={setStatusFilter}
-        onClear={() => setStatusFilter("")}
+        onClear={() => setStatusFilter("all")}
       />
 
       {invoicesQ.isLoading && (

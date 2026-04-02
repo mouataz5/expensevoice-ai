@@ -17,8 +17,8 @@ import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/PageHeader";
 import { EmptyState } from "@/components/EmptyState";
 
-const POLL_INTERVAL = 1500;
-const MAX_POLL_ATTEMPTS = 80;
+const POLL_INTERVAL = 3000;      // 3s between polls (OCR on CPU is slow)
+const MAX_POLL_ATTEMPTS = 400;   // up to 20 minutes total
 
 function fmtTND(val: number | null | undefined): string {
   if (val == null) return "—";
@@ -272,6 +272,28 @@ export default function EmployeeScanInvoice() {
 
       {preview && (
         <>
+          {/* Partial extraction warning — shown when items could not be read */}
+          {preview.items.length === 0 && (preview.supplier_name || (preview.total_ttc ?? 0) > 0) && (
+            <Card className="border-amber-400/60 bg-amber-50/70 dark:bg-amber-950/30">
+              <CardContent className="p-4 flex items-start gap-3">
+                <span className="text-amber-600 text-xl mt-0.5">⚠️</span>
+                <div className="space-y-1">
+                  <p className="font-semibold text-amber-800 dark:text-amber-300 text-sm">
+                    استخراج جزئي — يرجى المراجعة اليدوية
+                  </p>
+                  <p className="text-xs text-amber-700 dark:text-amber-400">
+                    تم استخراج بعض البيانات (المورد / رقم الفاتورة) لكن تعذّر قراءة جدول المنتجات
+                    أو المبالغ بشكل كامل بسبب جودة الصورة أو النص العربي المختلط.
+                    تحقّق من جميع الحقول وأدخل البنود يدوياً إن لزم.
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Extraction partielle — vérifiez les montants et saisissez les articles manuellement.
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
           {/* Confidence + Summary Header */}
           <Card>
             <CardContent className="p-5 space-y-4">
@@ -348,7 +370,9 @@ export default function EmployeeScanInvoice() {
             <Card>
               <CardContent className="p-5">
                 <p className="text-sm text-muted-foreground text-center">
-                  لم يتم استخراج مواد من الفاتورة (Aucun article extrait)
+                  {preview.extraction_error === "no_ocr_text"
+                    ? "لم يتم العثور على نص في الصورة — تحقق من جودة الصورة أو إعدادات المسح (No text detected — check image quality or OCR)"
+                    : "لم يتم استخراج مواد من الفاتورة (Aucun article extrait)"}
                 </p>
               </CardContent>
             </Card>
