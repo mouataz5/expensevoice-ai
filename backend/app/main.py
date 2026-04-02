@@ -102,6 +102,7 @@ def startup():
                     ("invoice_number", "VARCHAR(100)"),
                     ("supplier_name", "VARCHAR(255)"),
                     ("total_ttc", "NUMERIC(14,3)"),
+                    ("corrected_json", "JSONB"),
                 ]:
                     try:
                         conn.execute(text(f"ALTER TABLE invoices ADD COLUMN IF NOT EXISTS {col} {col_type}"))
@@ -114,6 +115,7 @@ def startup():
                     ("invoice_number", "VARCHAR(100)"),
                     ("supplier_name", "VARCHAR(255)"),
                     ("total_ttc", "REAL"),
+                    ("corrected_json", "TEXT"),
                 ]:
                     try:
                         conn.execute(text(f"ALTER TABLE invoices ADD COLUMN {col} {col_type}"))

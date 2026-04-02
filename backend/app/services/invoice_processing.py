@@ -1,6 +1,5 @@
 """
-Invoice processing pipeline — OCR + extraction + PDF report.
-Background: OCR → parse → generate PDF → store pdf_path → status=ready.
+Invoice processing pipeline — OCR → pipeline global (LLM + validation) → PDF.
 """
 import asyncio
 import logging
@@ -14,9 +13,11 @@ from sqlalchemy.orm import Session
 from app.models.invoice import Invoice
 from app.models.user import User
 from app.services.audit import audit_log
-from app.services.invoice_extraction import extract_invoice_from_ocr
+from app.services.invoice_global_pipeline import (
+    pipeline_to_stored_json,
+    run_invoice_pipeline_async,
+)
 from app.services.invoice_pdf import generate_invoice_report_pdf
-from app.services.ocr_service import extract_text
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,11 @@ def _denormalize_from_extracted(inv: Invoice, extracted: dict) -> None:
     inv.supplier_name = (extracted.get("supplier_name") or "").strip() or None
     totals = extracted.get("totals") or {}
     ttc = totals.get("ttc")
+    if ttc is None and extracted.get("total_ttc") is not None:
+        try:
+            ttc = float(extracted["total_ttc"])
+        except (TypeError, ValueError):
+            ttc = None
     if ttc is not None:
         inv.total_ttc = float(ttc)
     elif extracted.get("items"):
@@ -44,7 +50,7 @@ def run_ocr_extract_pdf(
     db: Session,
 ) -> None:
     """
-    Run OCR → extract → generate PDF; set pdf_path, denormalized fields, status=ready.
+    Run pipeline global → generate PDF; set pdf_path, denormalized fields, status=ready.
     """
     inv = db.execute(select(Invoice).where(Invoice.id == invoice_id)).scalar_one_or_none()
     if not inv:
@@ -55,31 +61,19 @@ def run_ocr_extract_pdf(
     employee_email = user.email if user else ""
 
     try:
-        ocr_text = extract_text(image_path)
-        inv.ocr_text = ocr_text or None
-        db.add(inv)
-        db.commit()
-        db.refresh(inv)
-
-        if not ocr_text or not ocr_text.strip():
-            extracted = {
-                "supplier_name": None,
-                "invoice_number": None,
-                "invoice_date": None,
-                "currency": "TND",
-                "items": [],
-                "totals": {"htva": None, "tva": None, "ttc": None},
-                "confidence": 0.0,
-            }
-            inv.extracted_json = extracted
-            inv.extraction_confidence = 0.0
-        else:
-            extracted, confidence = asyncio.run(
-                extract_invoice_from_ocr(ocr_text, transaction_type)
-            )
-            inv.extracted_json = extracted
-            inv.extraction_confidence = confidence
-
+        dbg = os.getenv("INVOICE_PIPELINE_DEBUG", "").lower() in ("1", "true", "yes")
+        resp = asyncio.run(
+            run_invoice_pipeline_async(image_path, transaction_type, debug=dbg)
+        )
+        inv.ocr_text = resp.ocr_text or None
+        overlay = getattr(inv, "corrected_json", None)
+        extracted = pipeline_to_stored_json(
+            resp,
+            transaction_type=transaction_type,
+            corrected_overlay=overlay if isinstance(overlay, dict) else None,
+        )
+        inv.extraction_confidence = float(extracted.get("confidence", 0.0))
+        inv.extracted_json = extracted
         _denormalize_from_extracted(inv, extracted)
         created_at_str = inv.created_at.isoformat() if inv.created_at else ""
 

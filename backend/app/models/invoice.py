@@ -29,6 +29,9 @@ class Invoice(Base):
     pdf_path: Mapped[str | None] = mapped_column(String(500), nullable=True)  # generated report PDF
     ocr_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     extracted_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # internal only, not exposed
+    corrected_json: Mapped[dict | None] = mapped_column(
+        JSON, nullable=True
+    )  # correctifs utilisateur (champs draft global)
 
     # Denormalized for list display (no JSON exposure)
     invoice_number: Mapped[str | None] = mapped_column(String(100), nullable=True)

@@ -1,4 +1,4 @@
-"""Invoice API schemas — no JSON extraction exposed to frontend."""
+"""Invoice API schemas — preview exposes structured extraction for review UI."""
 from datetime import datetime
 from typing import Any
 
@@ -33,6 +33,12 @@ class InvoiceRejectIn(BaseModel):
     rejection_reason: str = Field(..., min_length=1)
 
 
+class InvoiceCorrectIn(BaseModel):
+    """Correction patch aligned with global `InvoiceExtractionDraft` keys (flat)."""
+
+    patch: dict[str, Any] = Field(default_factory=dict)
+
+
 def invoice_to_status_out(inv: Any, *, error_message: bool = True) -> dict:
     """Minimal output for GET by id (polling / status)."""
     out = {
@@ -47,21 +53,67 @@ def invoice_to_status_out(inv: Any, *, error_message: bool = True) -> dict:
 
 def invoice_to_preview(inv: Any) -> dict:
     """Return extracted data for dashboard review before PDF download."""
-    extracted = inv.extracted_json or {}
+    from app.schemas.invoice_pipeline import InvoiceExtractionDraft
+    from app.services.invoice_legacy_compat import draft_to_legacy_extracted, merge_corrected
+
+    extracted = dict(inv.extracted_json or {})
+    ext = dict(extracted.get("extraction") or {})
+    corrected = getattr(inv, "corrected_json", None)
+    if isinstance(corrected, dict) and corrected:
+        ext = merge_corrected(ext, corrected)
+    try:
+        draft = InvoiceExtractionDraft.model_validate(ext)
+        flat = draft_to_legacy_extracted(draft)
+    except Exception:
+        flat = {
+            "supplier_name": extracted.get("supplier_name") or "",
+            "invoice_number": extracted.get("invoice_number") or "",
+            "invoice_date": extracted.get("invoice_date") or "",
+            "currency": extracted.get("currency") or "TND",
+            "items": extracted.get("items") or [],
+            "totals": extracted.get("totals") or {},
+        }
+
+    val = extracted.get("validation") or {}
+    global_conf = val.get("global_confidence")
+    if global_conf is None:
+        global_conf = float(inv.extraction_confidence or 0.0)
+    field_conf = val.get("field_confidence") or ext.get("field_confidence") or {}
+
+    warnings = sorted(
+        set((extracted.get("warnings") or []) + (val.get("warnings") or []) + (ext.get("warnings") or []))
+    )
+    missing = sorted(
+        set(
+            (extracted.get("missing_fields") or [])
+            + (val.get("missing_fields") or [])
+            + (ext.get("missing_fields") or [])
+        )
+    )
+
     return {
         "id": str(inv.id),
         "status": inv.status,
         "created_at": inv.created_at,
         "ocr_text": inv.ocr_text or "",
-        "supplier_name": extracted.get("supplier_name") or inv.supplier_name,
-        "invoice_number": extracted.get("invoice_number") or inv.invoice_number,
-        "invoice_date": extracted.get("invoice_date"),
-        "currency": extracted.get("currency", "TND"),
-        "items": extracted.get("items") or [],
-        "totals": extracted.get("totals") or {},
-        "confidence": float(inv.extraction_confidence) if inv.extraction_confidence else 0.0,
+        "normalized_text": extracted.get("normalized_text") or "",
+        "supplier_name": (flat.get("supplier_name") or extracted.get("supplier_name") or inv.supplier_name),
+        "invoice_number": (flat.get("invoice_number") or extracted.get("invoice_number") or inv.invoice_number),
+        "invoice_date": flat.get("invoice_date") or extracted.get("invoice_date"),
+        "currency": flat.get("currency") or extracted.get("currency") or "TND",
+        "items": flat.get("items") or extracted.get("items") or [],
+        "totals": flat.get("totals") or extracted.get("totals") or {},
+        "confidence": float(global_conf),
+        "global_confidence": float(global_conf),
+        "field_confidence": field_conf,
+        "validation": val,
+        "warnings": warnings,
+        "missing_fields": missing,
+        "extraction": ext,
+        "pipeline": extracted.get("pipeline"),
         "transaction_type": inv.transaction_type,
         "total_ttc": float(inv.total_ttc) if inv.total_ttc is not None else None,
+        "extraction_error": extracted.get("extraction_error"),
     }
 
 

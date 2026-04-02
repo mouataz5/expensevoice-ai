@@ -248,7 +248,18 @@ def generate_invoice_report_pdf(
     totals = extracted.get("totals") or {}
     total_htva = totals.get("htva")
     total_tva = totals.get("tva")
-    stamp_duty = None
+    stamp_duty = totals.get("timbre")
+    try:
+        if stamp_duty is not None and float(stamp_duty) <= 0:
+            stamp_duty = None
+    except (TypeError, ValueError):
+        stamp_duty = None
+    if stamp_duty is None:
+        try:
+            sd = float(extracted.get("stamp_duty") or 0)
+            stamp_duty = sd if sd > 0 else None
+        except (TypeError, ValueError):
+            stamp_duty = None
     total_ttc = totals.get("ttc")
     if total_ttc is None and items:
         total_ttc = sum(float(it.get("line_total") or 0) for it in items)

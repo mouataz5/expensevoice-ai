@@ -3,6 +3,7 @@ API v1 router — all routes are mounted under /api/v1.
 Part 2.2: Versioned API.
 """
 from fastapi import APIRouter, Depends
+from sqlalchemy import text
 
 from app.api.audit import router as audit_router
 from app.api.audit_export import router as audit_export_router
@@ -25,11 +26,28 @@ from app.api.users import router as users_router
 from app.api.voice import router as voice_router
 from app.api.settings import router as settings_router
 from app.api.invoices import router as invoices_router
+from app.core.config import APP_VERSION
 from app.core.dependencies import get_current_user
+from app.db.session import engine
 from app.models.user import User
 
 # Single v1 router: prefix is applied in main as /api/v1
 router = APIRouter()
+
+
+@router.get("/health")
+def health_v1():
+    """Alias versionné de GET /health (load balancer / spec API v1)."""
+    payload = {"status": "ok", "version": APP_VERSION}
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        payload["database"] = "ok"
+    except Exception as e:
+        payload["database"] = "error"
+        payload["database_error"] = str(e)
+        payload["status"] = "degraded"
+    return payload
 
 # Auth & me
 router.include_router(auth_router)

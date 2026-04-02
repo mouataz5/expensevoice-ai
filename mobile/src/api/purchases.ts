@@ -30,6 +30,25 @@ export async function getPurchase(id: string): Promise<PurchaseOut> {
   return data;
 }
 
+export type PurchaseAlertRow = {
+  id: string;
+  alert_type: string;
+  message: string;
+  severity: string;
+  status: string;
+  created_at: string | null;
+};
+
+export async function fetchPurchaseAlerts(id: string): Promise<PurchaseAlertRow[]> {
+  const { data } = await api.get<PurchaseAlertRow[]>(`/purchases/${id}/alerts`);
+  return data;
+}
+
+export async function extractPurchase(id: string): Promise<{ extracted: Record<string, unknown> }> {
+  const { data } = await api.post<{ extracted: Record<string, unknown> }>(`/purchases/${id}/extract`);
+  return data;
+}
+
 const AUDIO_MIME: Record<string, string> = {
   ".m4a": "audio/mp4",
   ".mp4": "audio/mp4",
