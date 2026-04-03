@@ -1,0 +1,128 @@
+"""
+Étapes communes du pipeline facture après texte normalisé (LLM → heuristique → post → validation).
+
+Évite la duplication entre `run_invoice_pipeline_async` et `run_invoice_extraction_from_text_async`.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import os
+from typing import Any
+
+from app.core.pipeline_observability import pipeline_stage
+from app.schemas.invoice_pipeline import (
+    InvoiceExtractionDebug,
+    InvoiceExtractionDraft,
+    InvoiceExtractionResponse,
+    OCRResult,
+)
+from app.services.confidence_scoring import compute_global_confidence
+from app.services.invoice_heuristics import heuristic_invoice_from_ocr
+from app.services.invoice_draft_merge import merge_draft_with_heuristic
+from app.services.invoice_llm_extract import (
+    INVOICE_GLOBAL_SYSTEM_PROMPT,
+    extract_invoice_with_llm,
+    heuristic_to_global_draft,
+)
+from app.services.invoice_validation_service import (
+    enrich_validation_confidence,
+    validate_invoice_draft,
+)
+from app.services.ocr_text_normalization import detect_currency_hint, excerpt_for_debug
+from app.utils.post_processing import post_correct_invoice_draft
+
+logger = logging.getLogger(__name__)
+
+
+async def complete_invoice_extraction_from_normalized(
+    *,
+    raw_ocr: str,
+    normalized: str,
+    transaction_type: str,
+    ocr_for_confidence: OCRResult,
+    debug: bool,
+    invoice_id: str | None = None,
+) -> InvoiceExtractionResponse:
+    """
+    À partir d’un texte OCR/transcription déjà normalisé et non vide.
+    """
+    with pipeline_stage(
+        "llm_extract",
+        component="invoice_pipeline",
+        invoice_id=invoice_id,
+    ):
+        draft, raw_llm = await extract_invoice_with_llm(normalized, transaction_type)
+
+    with pipeline_stage(
+        "heuristic_merge",
+        component="invoice_pipeline",
+        invoice_id=invoice_id,
+    ):
+        if raw_ocr.strip():
+            heur = heuristic_invoice_from_ocr(raw_ocr, transaction_type)
+            hd = heuristic_to_global_draft(heur)
+            draft = merge_draft_with_heuristic(draft, hd)
+
+        if not (draft.currency or "").strip():
+            hint = detect_currency_hint(raw_ocr)
+            if hint:
+                draft.currency = hint
+
+    with pipeline_stage(
+        "post_correct_validate",
+        component="invoice_pipeline",
+        invoice_id=invoice_id,
+    ):
+        draft, post_corr = post_correct_invoice_draft(draft, raw_ocr)
+        post_corrections_payload = {k: v for k, v in post_corr.items() if v}
+
+        validation = validate_invoice_draft(draft, raw_ocr)
+        validation = enrich_validation_confidence(validation)
+
+        fc, gc = compute_global_confidence(ocr_for_confidence, draft, validation)
+        draft.field_confidence = fc
+        draft.global_confidence = gc
+        validation.field_confidence = fc
+        validation.global_confidence = gc
+
+    warnings = sorted(set((draft.warnings or []) + (validation.warnings or [])))
+
+    dbg: InvoiceExtractionDebug | None = None
+    if debug or os.getenv("INVOICE_DEBUG", "").lower() in ("1", "true", "yes"):
+        _cap = 32000
+        ocr_pv = str(ocr_for_confidence.metadata.get("provider") or "")
+        dbg = InvoiceExtractionDebug(
+            ocr_provider=ocr_pv or None,
+            llm_provider=os.getenv("LLM_PROVIDER"),
+            normalized_text_excerpt=excerpt_for_debug(normalized, 3500),
+            system_prompt_excerpt=excerpt_for_debug(INVOICE_GLOBAL_SYSTEM_PROMPT, 2000),
+            user_prompt_excerpt=excerpt_for_debug(
+                f"TRANSACTION_TYPE: {transaction_type}\n\nOCR_TEXT:\n{normalized}", 2000
+            ),
+            llm_raw_response=excerpt_for_debug(raw_llm, 4000),
+            parsed_ok=True,
+            validation_summary=f"flags={len(validation.validation_flags)} missing={len(validation.missing_fields)}",
+            raw_ocr_text=excerpt_for_debug(raw_ocr, _cap),
+            cleaned_text_full=excerpt_for_debug(normalized, _cap),
+            system_prompt_full=excerpt_for_debug(INVOICE_GLOBAL_SYSTEM_PROMPT, _cap),
+            llm_raw_response_full=excerpt_for_debug(raw_llm, _cap),
+            final_json_text=excerpt_for_debug(
+                json.dumps(draft.model_dump(mode="json"), ensure_ascii=False, default=str),
+                _cap,
+            ),
+            post_corrections=post_corrections_payload or None,
+        )
+
+    return InvoiceExtractionResponse(
+        success=bool(raw_ocr.strip()),
+        ocr_text=raw_ocr,
+        normalized_text=normalized,
+        cleaned_text=normalized,
+        data=draft,
+        validation=validation,
+        warnings=warnings,
+        debug=dbg,
+        ocr_metadata=dict(ocr_for_confidence.metadata or {}),
+        post_corrections=post_corrections_payload,
+    )

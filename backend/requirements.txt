@@ -7,11 +7,13 @@ python-jose[cryptography]
 bcrypt>=4.0
 email-validator
 python-multipart
+# STT — faster-whisper (CTranslate2) = stack « insanely fast » prod ; ffmpeg requis sur le serveur
 faster-whisper
 httpx>=0.27
 groq>=0.4,<1
 reportlab
 slowapi
+celery[redis]>=5.3,<6
 pytest>=7.0
 # Invoice OCR — Tesseract requires `tesseract-ocr` system packages (see Dockerfile)
 pytesseract>=0.3.10

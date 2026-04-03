@@ -28,7 +28,7 @@ def test_pipeline_socep_heuristic_fill(monkeypatch: pytest.MonkeyPatch) -> None:
         return InvoiceExtractionDraft(), ""
 
     monkeypatch.setattr(
-        "app.services.invoice_global_pipeline.extract_invoice_with_llm",
+        "app.services.invoice_pipeline_core.extract_invoice_with_llm",
         fake_llm,
     )
 
@@ -60,7 +60,7 @@ def test_pipeline_remaining_due_fixture(monkeypatch: pytest.MonkeyPatch) -> None
         return InvoiceExtractionDraft(), ""
 
     monkeypatch.setattr(
-        "app.services.invoice_global_pipeline.extract_invoice_with_llm",
+        "app.services.invoice_pipeline_core.extract_invoice_with_llm",
         fake_llm,
     )
 

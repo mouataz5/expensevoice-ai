@@ -4,6 +4,7 @@ __pycache__/
 .env
 .venv/
 venv/
+backend/.venv/
 
 # Node
 node_modules/
@@ -19,6 +20,7 @@ node_modules/
 
 # Docker
 *.env
+.env.production
 
 # IDE
 .vscode/

@@ -1,8 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
-import { View, Text, StyleSheet, FlatList, ActivityIndicator } from "react-native";
+import { View, Text, StyleSheet, FlatList, ActivityIndicator, RefreshControl } from "react-native";
 import { useLocale } from "../../src/context/LocaleContext";
 import { colors } from "../../src/theme/colors";
 import { listMyAlerts, type AlertOut } from "../../src/api/alerts";
+import { queryKeys } from "../../src/queryKeys";
 
 function AlertRow({ item }: { item: AlertOut }) {
   const isCritical = item.severity === "critical";
@@ -17,8 +18,8 @@ function AlertRow({ item }: { item: AlertOut }) {
 
 export default function AlertsScreen() {
   const { t } = useLocale();
-  const { data: alerts, isLoading, error, refetch } = useQuery({
-    queryKey: ["alerts"],
+  const { data: alerts, isLoading, error, refetch, isRefetching } = useQuery({
+    queryKey: queryKeys.alertsMe,
     queryFn: listMyAlerts,
   });
 
@@ -41,10 +42,18 @@ export default function AlertsScreen() {
 
   if (!alerts?.length) {
     return (
-      <View style={styles.centered}>
-        <Text style={styles.emptyTitle}>{t("noAlerts")}</Text>
-        <Text style={styles.emptySub}>{t("emptyList")}</Text>
-      </View>
+      <FlatList
+        data={[]}
+        ListEmptyComponent={
+          <View style={styles.centered}>
+            <Text style={styles.emptyTitle}>{t("noAlerts")}</Text>
+            <Text style={styles.emptySub}>{t("emptyList")}</Text>
+          </View>
+        }
+        refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} />}
+        contentContainerStyle={[styles.list, styles.listFlex]}
+        style={styles.container}
+      />
     );
   }
 
@@ -55,6 +64,7 @@ export default function AlertsScreen() {
       renderItem={({ item }) => <AlertRow item={item} />}
       contentContainerStyle={styles.list}
       style={styles.container}
+      refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} />}
     />
   );
 }
@@ -62,6 +72,7 @@ export default function AlertsScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   list: { padding: 16, paddingBottom: 40 },
+  listFlex: { flexGrow: 1 },
   centered: { flex: 1, justifyContent: "center", alignItems: "center", padding: 24, backgroundColor: colors.background },
   row: {
     backgroundColor: colors.surface,

@@ -19,6 +19,12 @@ services:
       timeout: 3s
       retries: 10
 
+  redis:
+    image: redis:7-alpine
+    container_name: abes_dev_redis
+    ports:
+      - "6379:6379"
+
   backend:
     build:
       context: ./backend
@@ -34,9 +40,31 @@ services:
     environment:
       - DATABASE_URL=postgresql+psycopg://postgres:postgres@db:5432/expensevoice
       - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      # Décommenter pour file d’attente Celery au lieu de BackgroundTasks uniquement :
+      # - CELERY_BROKER_URL=redis://redis:6379/0
     depends_on:
       db:
         condition: service_healthy
+
+  celery-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    container_name: abes_dev_celery
+    volumes:
+      - ./backend:/app
+      - backend_venv:/app/.venv
+    env_file:
+      - ./backend/.env
+    environment:
+      - DATABASE_URL=postgresql+psycopg://postgres:postgres@db:5432/expensevoice
+      - CELERY_BROKER_URL=redis://redis:6379/0
+    command: celery -A app.workers.celery_app worker -l INFO -Q invoice,voice
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
 
   dashboard:
     build:

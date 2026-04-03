@@ -110,39 +110,77 @@ def _fallback_draft() -> InvoiceExtractionDraft:
     )
 
 
+async def _call_llm_provider(provider: str, user: str) -> str:
+    p = (provider or "").strip().lower()
+    if p == "ollama":
+        return await _ollama(user)
+    if p == "openai":
+        return await _openai(user)
+    if p == "groq":
+        return await _groq(user)
+    if p == "mcp":
+        return await _mcp(user)
+    raise ValueError(f"unknown_or_unconfigured_llm_provider:{p}")
+
+
 async def extract_invoice_with_llm(
     normalized_ocr_text: str,
     transaction_type: str,
 ) -> tuple[InvoiceExtractionDraft, str]:
-    """Retourne (draft, raw_response_text)."""
-    provider = (os.getenv("LLM_PROVIDER") or "groq").lower()
+    """
+    Retourne (draft, raw_response_text).
+
+    Chaîne : `LLM_PROVIDER` puis optionnellement `LLM_FALLBACK_PROVIDER` si échec réseau,
+    réponse vide ou JSON invalide.
+    """
+    primary = (os.getenv("LLM_PROVIDER") or "groq").lower().strip()
+    fallback = (os.getenv("LLM_FALLBACK_PROVIDER") or "").strip().lower()
+    chain: list[str] = []
+    for p in (primary, fallback):
+        if p and p not in chain:
+            chain.append(p)
+    if not chain:
+        chain = ["groq"]
+
     user = (
         f"TRANSACTION_TYPE: {transaction_type}\n\n"
         f"OCR_TEXT:\n{normalized_ocr_text}\n"
     )
-    raw_out = ""
+    notes: list[str] = []
+    last_raw = ""
 
-    try:
-        if provider == "ollama":
-            raw_out = await _ollama(user)
-        elif provider == "openai":
-            raw_out = await _openai(user)
-        elif provider == "groq":
-            raw_out = await _groq(user)
-        elif provider == "mcp":
-            raw_out = await _mcp(user)
-        elif provider == "fallback":
-            return _fallback_draft(), ""
-        else:
-            logger.warning("Unknown LLM_PROVIDER %s", provider)
-            return _fallback_draft(), ""
-        draft = _parse_draft(raw_out)
-        return draft, raw_out
-    except Exception as e:
-        logger.warning("LLM invoice extraction failed: %s", str(e)[:300])
-        d = _fallback_draft()
-        d.warnings = list({*(d.warnings or []), str(e)[:200]})
-        return d, raw_out or str(e)
+    for prov in chain:
+        if prov == "fallback":
+            d = _fallback_draft()
+            d.warnings = list({*(d.warnings or []), "LLM_PROVIDER=fallback"})
+            return d, ""
+        try:
+            raw_out = await _call_llm_provider(prov, user)
+            last_raw = raw_out or ""
+        except Exception as e:
+            msg = f"{prov}:{str(e)[:120]}"
+            notes.append(msg)
+            logger.warning("LLM provider %s call failed: %s", prov, str(e)[:300])
+            continue
+        if not (raw_out or "").strip():
+            notes.append(f"{prov}:empty_response")
+            continue
+        try:
+            draft = _parse_draft(raw_out)
+            if prov != primary:
+                draft.warnings = list(
+                    {*(draft.warnings or []), f"llm_fallback_used:{prov}"}
+                )
+            return draft, raw_out
+        except Exception as e:
+            notes.append(f"{prov}:json_parse:{str(e)[:80]}")
+            logger.warning("LLM provider %s JSON parse failed: %s", prov, str(e)[:200])
+            continue
+
+    logger.warning("All LLM providers exhausted: %s", notes[:5])
+    d = _fallback_draft()
+    d.warnings = list({*(d.warnings or []), *(notes[:5])})
+    return d, last_raw
 
 
 async def _ollama(user: str) -> str:

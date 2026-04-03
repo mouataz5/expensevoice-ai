@@ -63,7 +63,12 @@ def run_ocr_extract_pdf(
     try:
         dbg = os.getenv("INVOICE_PIPELINE_DEBUG", "").lower() in ("1", "true", "yes")
         resp = asyncio.run(
-            run_invoice_pipeline_async(image_path, transaction_type, debug=dbg)
+            run_invoice_pipeline_async(
+                image_path,
+                transaction_type,
+                debug=dbg,
+                invoice_id=str(invoice_id),
+            )
         )
         inv.ocr_text = resp.ocr_text or None
         overlay = getattr(inv, "corrected_json", None)
