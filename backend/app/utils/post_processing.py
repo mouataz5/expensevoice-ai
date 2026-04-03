@@ -22,6 +22,10 @@ _OCR_WORD_FIXES_GENERAL: tuple[tuple[str, str], ...] = (
     (r"\bcha1r\b", "chair"),
     (r"\bchail\b", "chair"),
     (r"\bchai r\b", "chair"),
+    (r"\bch@ir\b", "chair"),
+    (r"\bchaiir\b", "chair"),
+    (r"\b0euf\b", "œuf"),
+    (r"\boeuf\b", "œuf"),
 )
 
 
@@ -92,6 +96,13 @@ def fix_invalid_date(date_str: str | None) -> tuple[str | None, str | None]:
     iso = parse_date_to_iso(raw)
     if iso and is_valid_iso_date(iso):
         return iso, None
+
+    # JJMMAAAA sans séparateur (ex. 16012026 → 16/01/2026) — cas rare OCR
+    m_compact = re.fullmatch(r"(\d{2})(\d{2})(20\d{2})", raw.replace(" ", ""))
+    if m_compact:
+        d, mo, y = int(m_compact.group(1)), int(m_compact.group(2)), int(m_compact.group(3))
+        if 1 <= mo <= 12 and _calendar_ok(y, mo, d):
+            return f"{y:04d}-{mo:02d}-{d:02d}", None
 
     m = re.search(r"\b(\d{1,2})[/.-](\d{1,2})[/.-](20\d{2})\b", raw)
     if m:

@@ -24,10 +24,12 @@ from app.models.user import User
 from app.schemas.invoice import InvoiceCorrectIn, InvoiceRejectIn, invoice_to_list_item, invoice_to_preview, invoice_to_status_out
 from app.schemas.invoice_pipeline import InvoiceExtractionDraft
 from app.services.audit import audit_log
-from app.services.invoice_extraction import normalize_extracted_invoice_dict, reconcile_extracted_invoice_numbers
+from app.services.invoice_extraction import normalize_extracted_invoice_dict
+from app.services.invoice_heuristics import reconcile_extracted_invoice_numbers
 from app.services.invoice_global_pipeline import run_invoice_pipeline_async
 from app.services.invoice_legacy_compat import draft_to_legacy_extracted, merge_corrected
-from app.services.invoice_processing import _denormalize_from_extracted, process_invoice_async
+from app.services.invoice_processing import _denormalize_from_extracted
+from app.services.task_dispatcher import enqueue_invoice_processing
 from app.services.invoice_validation_service import enrich_validation_confidence, validate_invoice_draft
 from app.services.ocr_service import ALLOWED_MIME, MAX_IMAGE_BYTES
 from app.services.rules import evaluate_rules_and_create_alerts, get_allowed_categories
@@ -109,7 +111,7 @@ async def scan_invoice(
     db.commit()
     db.refresh(inv)
 
-    background_tasks.add_task(process_invoice_async, inv.id, file_path, tt)
+    enqueue_invoice_processing(inv.id, file_path, tt, background_tasks)
 
     audit_log(
         db,
@@ -304,7 +306,7 @@ async def retry_invoice_extraction(
     db.commit()
     db.refresh(inv)
 
-    background_tasks.add_task(process_invoice_async, inv.id, image_path, inv.transaction_type)
+    enqueue_invoice_processing(inv.id, image_path, inv.transaction_type, background_tasks)
 
     audit_log(
         db,

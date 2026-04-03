@@ -14,7 +14,7 @@ from app.core.rate_limit import limiter
 from app.db.deps import get_db
 from app.models.purchase import Purchase
 from app.models.user import User
-from app.services.purchase_processing import process_voice_purchase_async
+from app.services.task_dispatcher import enqueue_voice_purchase_processing
 
 router = APIRouter(prefix="/purchases", tags=["voice"])
 logger = logging.getLogger(__name__)
@@ -22,7 +22,18 @@ logger = logging.getLogger(__name__)
 # Private storage: NOT served by FastAPI static. Path stored in DB only.
 STORAGE_DIR = Path(os.getenv("AUDIO_STORAGE_DIR", "storage/audio"))
 
-ALLOWED_MIME = {"audio/webm", "audio/mp4", "audio/mpeg", "audio/wav", "audio/ogg"}
+ALLOWED_MIME = {
+    "audio/webm",
+    "audio/mp4",
+    "audio/mpeg",
+    "audio/wav",
+    "audio/ogg",
+    "audio/x-m4a",
+    "audio/m4a",
+    "audio/x-wav",
+    "audio/aac",
+    "audio/x-caf",
+}
 
 
 def validate_audio_file(audio: UploadFile, raw: bytes) -> None:
@@ -66,14 +77,18 @@ async def record_purchase_voice(
 
     ct = (audio.content_type or "").strip().lower().split(";", 1)[0]
     ext = "webm"
-    if ct == "audio/mp4":
-        ext = "mp4"
+    if ct in ("audio/mp4", "audio/x-m4a", "audio/m4a"):
+        ext = "m4a"
     elif ct == "audio/mpeg":
         ext = "mp3"
     elif ct in ("audio/wav", "audio/x-wav"):
         ext = "wav"
     elif "ogg" in ct:
         ext = "ogg"
+    elif ct == "audio/aac":
+        ext = "aac"
+    elif ct == "audio/x-caf":
+        ext = "caf"
 
     filename = f"{uuid.uuid4()}.{ext}"
     path = STORAGE_DIR / filename
@@ -98,12 +113,12 @@ async def record_purchase_voice(
     db.commit()
     db.refresh(item)
 
-    background_tasks.add_task(
-        process_voice_purchase_async,
+    enqueue_voice_purchase_processing(
         item.id,
         file_path,
         language or "ar",
         tt,
+        background_tasks,
     )
 
     elapsed = time.perf_counter() - start

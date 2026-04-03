@@ -32,6 +32,13 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
+        name="voice-studio"
+        options={{
+          title: t("voiceStudio"),
+          tabBarIcon: ({ color, size }) => <Ionicons name="mic-circle" size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
         name="scan"
         options={{
           title: t("scanInvoice"),

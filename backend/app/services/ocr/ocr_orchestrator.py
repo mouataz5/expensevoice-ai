@@ -1,12 +1,17 @@
 """
 Orchestration OCR : OCR_PROVIDER = paddleocr | tesseract | easyocr | auto.
 auto : paddleocr puis tesseract puis easyocr (100 % open source, sans cloud OCR).
+
+Robustesse : nouvelles tentatives par provider (OCR_PROVIDER_ATTEMPTS) et passages
+chaîne complets (OCR_CHAIN_ROUNDS) si le texte reste vide.
 """
 from __future__ import annotations
 
 import logging
 import os
+import time
 
+from app.core.pipeline_observability import pipeline_stage
 from app.schemas.invoice_pipeline import OCRResult
 from app.services.ocr.providers.easyocr_provider import EasyOcrProvider
 from app.services.ocr.providers.paddleocr_provider import PaddleOcrProvider
@@ -15,34 +20,92 @@ from app.services.ocr.providers.tesseract import TesseractOcrProvider
 logger = logging.getLogger(__name__)
 
 
-def run_ocr(image_path: str) -> OCRResult:
-    # Défaut auto = PaddleOCR d'abord puis Tesseract / EasyOCR si texte vide.
+def _provider_chain() -> list:
     mode = (os.getenv("OCR_PROVIDER") or "auto").strip().lower()
-    providers: list = []
-
     if mode in ("paddle", "paddleocr"):
-        providers = [PaddleOcrProvider()]
-    elif mode == "tesseract":
-        providers = [TesseractOcrProvider()]
-    elif mode == "easyocr":
-        providers = [EasyOcrProvider()]
-    else:
-        providers = [
-            PaddleOcrProvider(),
-            TesseractOcrProvider(),
-            EasyOcrProvider(),
-        ]
+        return [PaddleOcrProvider()]
+    if mode == "tesseract":
+        return [TesseractOcrProvider()]
+    if mode == "easyocr":
+        return [EasyOcrProvider()]
+    return [
+        PaddleOcrProvider(),
+        TesseractOcrProvider(),
+        EasyOcrProvider(),
+    ]
 
+
+def _extract_once(p, image_path: str) -> OCRResult:
+    """Une tentative d’extraction ; lève si le provider lève."""
+    t0 = time.perf_counter()
+    res = p.extract(image_path)
+    elapsed_ms = round((time.perf_counter() - t0) * 1000, 2)
+    logger.info(
+        "ocr_provider_timing",
+        extra={
+            "pipeline_stage": "ocr_provider",
+            "component": "ocr",
+            "ocr_provider": getattr(p, "name", str(p)),
+            "duration_ms": elapsed_ms,
+            "chars": len(res.raw_text or ""),
+        },
+    )
+    return res
+
+
+def _extract_with_retries(p, image_path: str) -> OCRResult:
+    attempts = max(1, int(os.getenv("OCR_PROVIDER_ATTEMPTS", "2")))
     last: OCRResult | None = None
-    for p in providers:
+    last_err: Exception | None = None
+    for attempt in range(attempts):
         try:
-            res = p.extract(image_path)
-            last = res
-            if (res.raw_text or "").strip():
-                logger.info("OCR provider=%s chars=%d", p.name, len(res.raw_text))
-                return res
+            return _extract_once(p, image_path)
         except Exception as e:
-            logger.warning("OCR provider %s error: %s", getattr(p, "name", p), e)
-            last = OCRResult(raw_text="", metadata={"error": str(e)[:200]})
+            last_err = e
+            logger.warning(
+                "OCR provider=%s attempt %d/%d error: %s",
+                getattr(p, "name", p),
+                attempt + 1,
+                attempts,
+                e,
+            )
+            last = OCRResult(
+                raw_text="",
+                metadata={"error": str(e)[:200], "provider": getattr(p, "name", "?")},
+            )
+    if last_err:
+        logger.warning("OCR provider %s exhausted retries", getattr(p, "name", p))
+    return last or OCRResult(raw_text="", metadata={"error": "no_result"})
+
+
+def run_ocr(image_path: str) -> OCRResult:
+    providers = _provider_chain()
+    chain_rounds = max(1, int(os.getenv("OCR_CHAIN_ROUNDS", "1")))
+    last: OCRResult | None = None
+
+    for round_idx in range(chain_rounds):
+        with pipeline_stage(
+            "ocr_chain",
+            component="ocr",
+            extra={"round": round_idx + 1, "chain_rounds": chain_rounds},
+        ):
+            for p in providers:
+                try:
+                    res = _extract_with_retries(p, image_path)
+                    last = res
+                    if (res.raw_text or "").strip():
+                        logger.info(
+                            "OCR provider=%s chars=%d round=%d",
+                            p.name,
+                            len(res.raw_text),
+                            round_idx + 1,
+                        )
+                        return res
+                except Exception as e:
+                    logger.warning("OCR provider %s error: %s", getattr(p, "name", p), e)
+                    last = OCRResult(raw_text="", metadata={"error": str(e)[:200]})
+
+        if round_idx + 1 < chain_rounds:
+            logger.info("OCR chain round %d empty text, retrying chain", round_idx + 1)
 
     return last or OCRResult(raw_text="", metadata={"error": "no_provider"})

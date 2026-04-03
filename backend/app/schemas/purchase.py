@@ -24,6 +24,13 @@ class PurchaseOut(BaseModel):
     status: str
     purchase_date: datetime
     created_at: datetime
+    # Voix / pipeline (aligné mobile + GET détail)
+    transaction_type: Optional[str] = None
+    processing_status: Optional[str] = None
+    stt_confidence: Optional[float] = None
+    extraction_confidence: Optional[float] = None
+    transcription: Optional[str] = None
+    audio_file_path: Optional[str] = None
 
     model_config = {"from_attributes": True}
 

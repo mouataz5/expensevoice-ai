@@ -5,6 +5,7 @@ import { useLocale } from "../../src/context/LocaleContext";
 import { colors } from "../../src/theme/colors";
 import { listMyPurchases } from "../../src/api/purchases";
 import { listMyAlerts } from "../../src/api/alerts";
+import { queryKeys } from "../../src/queryKeys";
 
 function todayISO() {
   const d = new Date();
@@ -16,11 +17,11 @@ export default function HomeScreen() {
   const { t } = useLocale();
 
   const { data: purchases, isLoading: loadingPurchases } = useQuery({
-    queryKey: ["purchases-summary"],
+    queryKey: queryKeys.purchasesMe,
     queryFn: listMyPurchases,
   });
   const { data: alerts, isLoading: loadingAlerts } = useQuery({
-    queryKey: ["alerts-summary"],
+    queryKey: queryKeys.alertsMe,
     queryFn: listMyAlerts,
   });
 

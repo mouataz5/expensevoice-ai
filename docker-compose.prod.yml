@@ -1,6 +1,9 @@
 # Production Docker Compose — Abes AgroTech
 # Domains: app.abesagrotech.tn (frontend), api.abesagrotech.tn (backend)
 # Usage: docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+#
+# Celery : réutilise l’image `abes-backend:prod` (un seul `build` sur `backend` pour éviter l’erreur Buildx
+# « image already exists » si deux services construisent la même tag en parallèle).
 
 services:
   nginx:
@@ -47,11 +50,50 @@ services:
       - JWT_SECRET=${JWT_SECRET}
       - CORS_ORIGINS=${CORS_ORIGINS}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
       - AUDIO_STORAGE_DIR=/data/audio
       - INVOICE_STORAGE_DIR=/data/invoices
     volumes:
       - app_data:/data
     depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - abes-net
+
+  celery-worker:
+    image: abes-backend:prod
+    container_name: abes-celery
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - JWT_SECRET=${JWT_SECRET}
+      - CORS_ORIGINS=${CORS_ORIGINS}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
+      - AUDIO_STORAGE_DIR=/data/audio
+      - INVOICE_STORAGE_DIR=/data/invoices
+    volumes:
+      - app_data:/data
+    command:
+      [
+        "celery",
+        "-A",
+        "app.workers.celery_app",
+        "worker",
+        "-l",
+        "INFO",
+        "-Q",
+        "invoice,voice",
+        "--concurrency=2",
+      ]
+    depends_on:
+      backend:
+        condition: service_started
       db:
         condition: service_healthy
       redis:

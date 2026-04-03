@@ -26,6 +26,7 @@ from app.api.users import router as users_router
 from app.api.voice import router as voice_router
 from app.api.settings import router as settings_router
 from app.api.invoices import router as invoices_router
+from app.api.speech import router as speech_router
 from app.core.config import APP_VERSION
 from app.core.dependencies import get_current_user
 from app.db.session import engine
@@ -79,6 +80,7 @@ router.include_router(policies_public_router)
 router.include_router(policies_read_router)
 router.include_router(settings_router)
 router.include_router(invoices_router)
+router.include_router(speech_router)
 
 
 @router.get("/me")

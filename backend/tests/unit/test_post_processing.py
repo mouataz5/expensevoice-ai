@@ -19,6 +19,12 @@ def test_fix_invalid_date_iso_bad_day() -> None:
     assert fixed == "2026-01-16"
 
 
+def test_fix_invalid_date_compact_ddmmyyyy() -> None:
+    fixed, note = fix_invalid_date("16012026")
+    assert fixed == "2026-01-16"
+    assert note is None
+
+
 def test_fix_common_words_chat_to_chair_with_context() -> None:
     ocr = "Poussin chat 1750"
     t = fix_common_words("Poussin chat", ocr_context=ocr)
