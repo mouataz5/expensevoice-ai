@@ -2,6 +2,10 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+# Large wheels (torch via EasyOCR) + slow networks: avoid pip read timeouts
+ENV PIP_DEFAULT_TIMEOUT=1200
+ENV PIP_RETRIES=20
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
     tesseract-ocr \
@@ -9,6 +13,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr-eng \
     tesseract-ocr-ara \
     && rm -rf /var/lib/apt/lists/*
+
+# EasyOCR otherwise resolves to CUDA PyTorch + huge nvidia-* wheels (often times out in Docker).
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt pytesseract Pillow

@@ -3,6 +3,9 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+ENV PIP_DEFAULT_TIMEOUT=1200
+ENV PIP_RETRIES=20
+
 # System deps for psycopg + invoice OCR (align with Dockerfile.dev)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
@@ -11,6 +14,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr-eng \
     tesseract-ocr-ara \
     && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu
 
 COPY requirements.txt .
 # Strip all --hash=... (inline and whole lines) to avoid mismatch when PyPI re-releases packages
