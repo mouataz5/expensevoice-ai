@@ -18,6 +18,21 @@ export type TranscribeApiResult = {
   confidence?: number | null;
 };
 
+export type VoicePurchaseItem = {
+  name: string;
+  quantity: number | null;
+  unit_price: number | null;
+  line_total: number | null;
+};
+
+export type VoicePurchaseJson = {
+  type: string;
+  items: VoicePurchaseItem[];
+  total: number | null;
+  currency: string;
+  warnings: string[];
+};
+
 export type ParseInvoiceVoiceResult = {
   success: boolean;
   transcription: {
@@ -27,6 +42,7 @@ export type ParseInvoiceVoiceResult = {
     duration_sec?: number | null;
   };
   invoice: Record<string, unknown>;
+  voice_purchase?: VoicePurchaseJson;
 };
 
 function audioFormData(audioUri: string): FormData {
@@ -57,18 +73,38 @@ export async function transcribeSpeech(
   return data;
 }
 
-/** POST /speech/parse-invoice — Whisper + pipeline facture Groq */
+/** POST /speech/parse-invoice — Whisper + Groq (lignes) OU texte seul + Groq */
 export async function parseInvoiceFromSpeech(
-  audioUri: string,
   transactionType: "sell" | "buy",
-  options?: { language?: string; debug?: boolean }
+  options: {
+    audioUri?: string | null;
+    text?: string | null;
+    language?: string;
+    debug?: boolean;
+  }
 ): Promise<ParseInvoiceVoiceResult> {
-  const formData = audioFormData(audioUri);
+  const formData = new FormData();
   formData.append("transaction_type", transactionType);
   if (options?.language) {
     formData.append("language", options.language);
   }
   formData.append("debug", options?.debug ? "true" : "false");
+  const t = (options.text ?? "").trim();
+  if (t) {
+    formData.append("text", t);
+  } else if (options.audioUri) {
+    const audioUri = options.audioUri;
+    const filename = audioUri.split("/").pop() || "recording.m4a";
+    const ext = filename.includes(".") ? filename.slice(filename.lastIndexOf(".")).toLowerCase() : ".m4a";
+    const mime = AUDIO_MIME[ext] ?? "audio/mp4";
+    formData.append("audio", {
+      uri: audioUri,
+      type: mime,
+      name: filename,
+    } as unknown as Blob);
+  } else {
+    throw new Error("parseInvoiceFromSpeech: fournir text ou audioUri");
+  }
   const { data } = await api.post<ParseInvoiceVoiceResult>("/speech/parse-invoice", formData, {
     timeout: 180000,
   });

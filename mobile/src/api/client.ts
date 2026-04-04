@@ -1,8 +1,15 @@
 import axios, { AxiosError } from "axios";
 import { getStoredToken, clearStoredToken } from "../lib/secure-store";
+import { notifyApiReachable, notifyApiUnreachable } from "../lib/networkStatus";
+import { resolveApiOrigin } from "./resolveApiUrl";
 
-const baseURL =
-  (process.env.EXPO_PUBLIC_API_URL || "http://localhost:8000").replace(/\/?$/, "") + "/api/v1";
+const apiOrigin = resolveApiOrigin();
+if (__DEV__) {
+  // Aide au diagnostic : même base que le backend Docker (:8000)
+  console.log(`[api] EXPO_PUBLIC_API_URL=${process.env.EXPO_PUBLIC_API_URL ?? "(auto)"} → ${apiOrigin}`);
+}
+
+const baseURL = `${apiOrigin.replace(/\/?$/, "")}/api/v1`;
 
 export const api = axios.create({
   baseURL,
@@ -29,10 +36,18 @@ api.interceptors.request.use(async (config) => {
   return config;
 });
 
-/** On 401, clear token so auth context redirects to login. */
+/** On 401, clear token so auth context redirects to login. Track reachability for offline UX. */
 api.interceptors.response.use(
-  (res) => res,
+  (res) => {
+    notifyApiReachable();
+    return res;
+  },
   async (err: AxiosError) => {
+    if (err.response == null) {
+      notifyApiUnreachable();
+    } else {
+      notifyApiReachable();
+    }
     if (err.response?.status === 401) {
       pendingToken = null;
       await clearStoredToken();

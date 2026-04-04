@@ -5,14 +5,23 @@ import {
   Text,
   StyleSheet,
   ScrollView,
-  TextInput,
-  ActivityIndicator,
   RefreshControl,
 } from "react-native";
 import { useLocale } from "../../src/context/LocaleContext";
 import { colors } from "../../src/theme/colors";
+import { font, radius, shadow, space } from "../../src/theme/tokens";
 import { queryKeys } from "../../src/queryKeys";
 import { fetchAudit, type AuditRow } from "../../src/api/audit";
+import {
+  TextFieldInput,
+  ErrorState,
+  EmptyState,
+  ProductBrandMark,
+  SectionTitle,
+  AuditListSkeleton,
+} from "../../src/components/ui";
+import { AdminAccentStripe, AdminErrorShell, AdminHeader } from "../../src/components/admin";
+import { formatApiError } from "../../src/utils/apiError";
 
 export default function DirectorAuditScreen() {
   const { t } = useLocale();
@@ -33,19 +42,19 @@ export default function DirectorAuditScreen() {
     });
   }, [q.data, filter]);
 
-  if (q.isLoading) {
-    return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color={colors.primary} />
-      </View>
-    );
-  }
+  const errFmt = q.isError ? formatApiError(q.error, t) : null;
 
-  if (q.isError) {
+  if (q.isError && errFmt) {
     return (
-      <View style={styles.centered}>
-        <Text style={styles.err}>{t("error")}</Text>
-      </View>
+      <AdminErrorShell>
+        <ErrorState
+          title={t("error")}
+          message={errFmt.message}
+          hint={errFmt.hint}
+          onRetry={() => q.refetch()}
+          retryLabel={t("retry")}
+        />
+      </AdminErrorShell>
     );
   }
 
@@ -55,28 +64,45 @@ export default function DirectorAuditScreen() {
       contentContainerStyle={styles.content}
       refreshControl={<RefreshControl refreshing={q.isRefetching} onRefresh={() => q.refetch()} />}
     >
-      <Text style={styles.title}>{t("auditTitle")}</Text>
-      <Text style={styles.sub}>{t("auditSubtitle")}</Text>
-      <TextInput
-        style={styles.search}
-        value={filter}
-        onChangeText={setFilter}
-        placeholder={t("auditSearchPlaceholder")}
-        placeholderTextColor={colors.textMuted}
-      />
+      <AdminAccentStripe />
+      <ProductBrandMark title={t("appName")} subtitle={t("auditTab")} />
+      <AdminHeader eyebrow={t("adminEyebrow")} subtitle={t("adminAuditWorkspaceSubtitle")} />
+      <SectionTitle title={t("auditTitle")} subtitle={t("auditSubtitle")} />
 
-      {filtered.length === 0 ? (
-        <Text style={styles.muted}>{t("auditEmpty")}</Text>
+      {q.isLoading ? (
+        <AuditListSkeleton count={8} />
       ) : (
-        filtered.slice(0, 80).map((r: AuditRow) => (
-          <View key={r.id} style={styles.row}>
-            <Text style={styles.action}>{r.action}</Text>
-            <Text style={styles.meta}>
-              {r.actor_role} · {r.entity_type} · {r.created_at.slice(0, 19)}
-            </Text>
-            <Text style={styles.msg}>{r.message}</Text>
-          </View>
-        ))
+        <>
+          <TextFieldInput
+            value={filter}
+            onChangeText={setFilter}
+            placeholder={t("auditSearchPlaceholder")}
+            accessibilityLabel={t("auditSearchPlaceholder")}
+            style={styles.search}
+          />
+
+          {!q.data?.length ? (
+            <EmptyState icon="reader-outline" title={t("auditEmpty")} subtitle={t("adminAuditEmptySub")} />
+          ) : filtered.length === 0 ? (
+            <EmptyState
+              icon="search-outline"
+              title={t("noSearchResults")}
+              subtitle={t("directorAuditFilteredEmpty")}
+              actionLabel={t("adminClearFilter")}
+              onAction={() => setFilter("")}
+            />
+          ) : (
+            filtered.slice(0, 80).map((r: AuditRow) => (
+              <View key={r.id} style={styles.row}>
+                <Text style={styles.action}>{r.action}</Text>
+                <Text style={styles.meta}>
+                  {r.actor_role} · {r.entity_type} · {r.created_at.slice(0, 19)}
+                </Text>
+                <Text style={styles.msg}>{r.message}</Text>
+              </View>
+            ))
+          )}
+        </>
       )}
     </ScrollView>
   );
@@ -84,30 +110,18 @@ export default function DirectorAuditScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
-  content: { padding: 16, paddingBottom: 40 },
-  centered: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: colors.background },
-  title: { fontSize: 22, fontWeight: "700", color: colors.text, marginBottom: 6 },
-  sub: { fontSize: 14, color: colors.textMuted, marginBottom: 12 },
-  search: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 10,
-    padding: 12,
-    marginBottom: 16,
-    backgroundColor: colors.surface,
-    color: colors.text,
-  },
+  content: { padding: space.lg, paddingBottom: space.xxxl },
+  search: { marginBottom: space.md },
   row: {
     backgroundColor: colors.surface,
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 10,
+    borderRadius: radius.md,
+    padding: space.md,
+    marginBottom: space.sm,
     borderWidth: 1,
     borderColor: colors.border,
+    ...shadow.soft,
   },
-  action: { fontSize: 14, fontWeight: "700", color: colors.primary, marginBottom: 4 },
-  meta: { fontSize: 12, color: colors.textMuted, marginBottom: 4 },
-  msg: { fontSize: 14, color: colors.text },
-  muted: { color: colors.textMuted, textAlign: "center", marginTop: 24 },
-  err: { color: colors.error },
+  action: { fontSize: font.sm, fontWeight: font.bold, color: colors.primary, marginBottom: space.xs },
+  meta: { fontSize: font.xs, color: colors.textMuted, marginBottom: space.xs },
+  msg: { fontSize: font.sm, color: colors.text, lineHeight: 20 },
 });

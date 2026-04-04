@@ -1,10 +1,9 @@
-import { useCallback } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   View,
   Text,
   StyleSheet,
   FlatList,
-  ActivityIndicator,
   TouchableOpacity,
   RefreshControl,
   ScrollView,
@@ -14,24 +13,23 @@ import { useQuery } from "@tanstack/react-query";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocale } from "../../src/context/LocaleContext";
 import { colors } from "../../src/theme/colors";
+import { font, radius, shadow, space } from "../../src/theme/tokens";
 import { listMyInvoices, type InvoiceListItem } from "../../src/api/invoices";
 import { queryKeys } from "../../src/queryKeys";
+import {
+  EmptyState,
+  ErrorState,
+  StatusPill,
+  invoiceStatusTone,
+  TextFieldInput,
+  InvoiceListSkeleton,
+  ProductBrandMark,
+} from "../../src/components/ui";
+import { formatApiError } from "../../src/utils/apiError";
 
-function invoiceStatusColors(status: string): { bg: string; fg: string } {
-  switch (status) {
-    case "ready":
-    case "ready_for_review":
-      return { bg: colors.surfaceMuted, fg: colors.primary };
-    case "approved":
-      return { bg: "#DCFCE7", fg: colors.success };
-    case "rejected":
-    case "failed":
-      return { bg: "#FEE2E2", fg: colors.error };
-    case "processing":
-      return { bg: "#FEF3C7", fg: colors.warning };
-    default:
-      return { bg: colors.surfaceMuted, fg: colors.textMuted };
-  }
+function fmtAmount(val: number | null | undefined): string {
+  if (val == null || Number.isNaN(val)) return "—";
+  return new Intl.NumberFormat("fr-TN", { minimumFractionDigits: 3, maximumFractionDigits: 3 }).format(val);
 }
 
 function InvoiceRow({
@@ -43,32 +41,31 @@ function InvoiceRow({
   onPress: () => void;
   formatStatus: (s: string) => string;
 }) {
-  const chip = invoiceStatusColors(item.status);
+  const tone = invoiceStatusTone(item.status);
   return (
     <TouchableOpacity
-      style={styles.row}
+      style={styles.rowWrap}
       onPress={onPress}
+      activeOpacity={0.92}
       accessibilityLabel={`Invoice ${item.invoice_number ?? item.id}`}
       accessibilityRole="button"
     >
-      <View style={styles.rowTop}>
-        <Text style={styles.rowTitle} numberOfLines={1}>
-          {item.supplier_name || item.invoice_number || "—"}
-        </Text>
-        <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
-      </View>
-      {item.invoice_number ? <Text style={styles.rowMeta}>N° {item.invoice_number}</Text> : null}
-      <View style={styles.rowBottom}>
-        <View style={[styles.statusChip, { backgroundColor: chip.bg }]}>
-          <Text style={[styles.statusChipText, { color: chip.fg }]}>{formatStatus(item.status)}</Text>
+      <View style={styles.row}>
+        <View style={styles.rowHeader}>
+          <Text style={styles.rowTitle} numberOfLines={1}>
+            {item.supplier_name || item.invoice_number || "—"}
+          </Text>
+          <Ionicons name="chevron-forward" size={20} color={colors.textSubtle} />
         </View>
-        {item.total_ttc != null ? (
-          <Text style={styles.rowAmount}>{item.total_ttc} TND</Text>
-        ) : (
-          <Text style={styles.rowAmountMuted}>—</Text>
-        )}
+        {item.invoice_number ? <Text style={styles.rowMeta}>N° {item.invoice_number}</Text> : null}
+        <View style={styles.rowMid}>
+          <StatusPill label={formatStatus(item.status)} tone={tone} />
+          <Text style={styles.rowAmount}>
+            {item.total_ttc != null ? `${fmtAmount(item.total_ttc)} TND` : "—"}
+          </Text>
+        </View>
+        <Text style={styles.rowDate}>{new Date(item.created_at).toLocaleString()}</Text>
       </View>
-      <Text style={styles.rowDate}>{new Date(item.created_at).toLocaleString()}</Text>
     </TouchableOpacity>
   );
 }
@@ -76,6 +73,8 @@ function InvoiceRow({
 export default function EmployeeInvoicesScreen() {
   const { t } = useLocale();
   const router = useRouter();
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
 
   const formatStatus = useCallback(
     (s: string) => {
@@ -97,42 +96,120 @@ export default function EmployeeInvoicesScreen() {
     queryFn: () => listMyInvoices({ limit: 100 }),
   });
 
+  const statusOptions = useMemo(() => {
+    const uniq = new Set<string>();
+    (invoices ?? []).forEach((i) => uniq.add(i.status));
+    return ["", ...Array.from(uniq).sort()];
+  }, [invoices]);
+
+  const filteredInvoices = useMemo(() => {
+    let list = invoices ?? [];
+    if (statusFilter) list = list.filter((i) => i.status === statusFilter);
+    const q = query.trim().toLowerCase();
+    if (q) {
+      list = list.filter(
+        (i) =>
+          (i.supplier_name?.toLowerCase().includes(q) ?? false) ||
+          (i.invoice_number?.toLowerCase().includes(q) ?? false) ||
+          (i.employee_email?.toLowerCase().includes(q) ?? false)
+      );
+    }
+    return list;
+  }, [invoices, statusFilter, query]);
+
+  const errFmt = error ? formatApiError(error, t) : null;
+
+  const listHeader = (
+    <View style={styles.listHeader}>
+      <ProductBrandMark title={t("appName")} subtitle={t("myInvoices")} />
+      <TextFieldInput
+        value={query}
+        onChangeText={setQuery}
+        placeholder={t("invoiceSearchPlaceholder")}
+        accessibilityLabel={t("invoiceSearchPlaceholder")}
+      />
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.chipsRow}
+        style={styles.chipsScroll}
+      >
+        {statusOptions.map((st) => (
+          <TouchableOpacity
+            key={st || "all"}
+            style={[styles.chip, statusFilter === st && styles.chipOn]}
+            onPress={() => setStatusFilter(st)}
+            accessibilityRole="button"
+            accessibilityState={{ selected: statusFilter === st }}
+          >
+            <Text style={[styles.chipTxt, statusFilter === st && styles.chipTxtOn]}>
+              {st ? formatStatus(st) : t("invoiceStatusAll")}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+    </View>
+  );
+
   if (isLoading) {
     return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color={colors.primary} />
+      <View style={styles.container}>
+        <View style={[styles.listHeader, { paddingBottom: 0 }]}>
+          <ProductBrandMark title={t("appName")} subtitle={t("myInvoices")} />
+        </View>
+        <InvoiceListSkeleton count={7} />
       </View>
     );
   }
 
-  if (error) {
+  if (error && errFmt) {
     return (
-      <View style={styles.centered}>
-        <Text style={styles.errorText}>{t("error")}</Text>
-        <Text style={styles.errorSub}>{String(error)}</Text>
-        <TouchableOpacity style={styles.retryBtn} onPress={() => refetch()} accessibilityRole="button">
-          <Text style={styles.retryBtnText}>{t("retry")}</Text>
-        </TouchableOpacity>
-      </View>
+      <ErrorState
+        title={t("error")}
+        message={errFmt.message}
+        hint={errFmt.hint}
+        onRetry={() => refetch()}
+        retryLabel={t("retry")}
+      />
     );
   }
 
   if (!invoices?.length) {
     return (
-      <ScrollView
-        contentContainerStyle={styles.centeredGrow}
+      <FlatList
+        data={[]}
+        renderItem={() => null}
+        ListHeaderComponent={
+          <View style={styles.listHeader}>
+            <ProductBrandMark title={t("appName")} subtitle={t("myInvoices")} />
+          </View>
+        }
+        ListEmptyComponent={
+          <EmptyState
+            icon="receipt-outline"
+            title={t("noInvoices")}
+            subtitle={t("emptyInvoicesBody")}
+            primaryCtaTitle={t("emptyInvoicesCtaPrimary")}
+            onPrimaryCta={() => router.push("/(tabs)/scan")}
+            secondaryCtaTitle={t("emptyInvoicesCtaSecondary")}
+            onSecondaryCta={() => router.push("/(tabs)/voice-studio")}
+          />
+        }
         refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} />}
-      >
-        <Text style={styles.emptyTitle}>{t("noInvoices")}</Text>
-        <Text style={styles.emptySub}>{t("emptyList")}</Text>
-      </ScrollView>
+        contentContainerStyle={styles.listFlex}
+        style={styles.container}
+      />
     );
   }
 
   return (
     <FlatList
-      data={invoices}
+      data={filteredInvoices}
       keyExtractor={(item) => item.id}
+      ListHeaderComponent={listHeader}
+      ListEmptyComponent={
+        <EmptyState icon="search-outline" title={t("noSearchResults")} subtitle={t("noSearchResultsHint")} />
+      }
       contentContainerStyle={styles.list}
       style={styles.container}
       refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} />}
@@ -154,30 +231,42 @@ export default function EmployeeInvoicesScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
-  list: { padding: 16, paddingBottom: 40 },
-  centered: { flex: 1, justifyContent: "center", alignItems: "center", padding: 24, backgroundColor: colors.background },
-  centeredGrow: { flexGrow: 1, justifyContent: "center", alignItems: "center", padding: 24, backgroundColor: colors.background },
-  row: {
-    backgroundColor: colors.surface,
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 12,
+  list: { paddingHorizontal: space.lg, paddingBottom: space.xxxl },
+  listFlex: { flexGrow: 1, backgroundColor: colors.background },
+  listHeader: { paddingHorizontal: space.lg, paddingTop: space.md, paddingBottom: space.sm, gap: space.md },
+  chipsScroll: { marginHorizontal: -space.lg },
+  chipsRow: { paddingHorizontal: space.lg, gap: space.sm, flexDirection: "row", alignItems: "center" },
+  chip: {
+    paddingHorizontal: space.md,
+    paddingVertical: space.xs + 2,
+    borderRadius: radius.full,
+    backgroundColor: colors.surfaceMuted,
     borderWidth: 1,
     borderColor: colors.border,
   },
-  rowTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 },
-  rowTitle: { fontSize: 16, fontWeight: "600", color: colors.text, flex: 1, marginRight: 8 },
-  rowMeta: { fontSize: 14, color: colors.textMuted, marginBottom: 10 },
-  rowBottom: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
-  statusChip: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
-  statusChipText: { fontSize: 12, fontWeight: "600" },
-  rowAmount: { fontSize: 15, fontWeight: "600", color: colors.primary },
-  rowAmountMuted: { fontSize: 14, color: colors.textMuted },
-  rowDate: { fontSize: 12, color: colors.textMuted },
-  errorText: { fontSize: 18, color: colors.error, marginBottom: 8 },
-  errorSub: { fontSize: 14, color: colors.textMuted, textAlign: "center", marginBottom: 16 },
-  retryBtn: { backgroundColor: colors.primary, paddingHorizontal: 20, paddingVertical: 12, borderRadius: 12 },
-  retryBtnText: { color: "#fff", fontWeight: "600" },
-  emptyTitle: { fontSize: 18, fontWeight: "600", color: colors.text, marginBottom: 8 },
-  emptySub: { fontSize: 14, color: colors.textMuted },
+  chipOn: { backgroundColor: colors.primaryMuted, borderColor: colors.primary },
+  chipTxt: { fontSize: font.sm, fontWeight: font.semibold, color: colors.textSecondary },
+  chipTxtOn: { color: colors.primaryDark },
+  rowWrap: { marginBottom: space.md },
+  row: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    padding: space.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadow.card,
+  },
+  rowHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: space.xs },
+  rowTitle: { fontSize: font.md, fontWeight: font.bold, color: colors.text, flex: 1, marginRight: space.sm },
+  rowMeta: { fontSize: font.sm, color: colors.textMuted, marginBottom: space.sm },
+  rowMid: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: space.sm,
+    flexWrap: "wrap",
+    gap: space.sm,
+  },
+  rowAmount: { fontSize: font.md, fontWeight: font.bold, color: colors.primary },
+  rowDate: { fontSize: font.xs, color: colors.textSubtle },
 });

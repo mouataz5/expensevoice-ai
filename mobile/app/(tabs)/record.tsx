@@ -5,12 +5,13 @@ import {
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
-  TextInput,
   ScrollView,
 } from "react-native";
 import { useQueryClient } from "@tanstack/react-query";
+import { useRouter } from "expo-router";
 import { useLocale } from "../../src/context/LocaleContext";
 import { colors } from "../../src/theme/colors";
+import { font, radius, space } from "../../src/theme/tokens";
 import {
   uploadVoice,
   getPurchase,
@@ -28,15 +29,26 @@ import {
   AudioModule,
   setAudioModeAsync,
 } from "expo-audio";
+import {
+  StepIndicator,
+  Card,
+  SectionTitle,
+  PrimaryButton,
+  GhostButton,
+  FormField,
+  TextFieldInput,
+  InfoBanner,
+} from "../../src/components/ui";
+import { confirmAsync } from "../../src/lib/confirm";
 
 type TxType = "buy" | "sell" | null;
 
 export default function RecordScreen() {
   const { t, locale } = useLocale();
+  const router = useRouter();
   const queryClient = useQueryClient();
   const [txType, setTxType] = useState<TxType>(null);
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
-  /** `recorder.isRecording` alone does not re-render; expo-audio expects this hook for UI. */
   const recorderState = useAudioRecorderState(recorder, 250);
   const isRecording = recorderState.isRecording;
   const [uploading, setUploading] = useState(false);
@@ -55,7 +67,6 @@ export default function RecordScreen() {
         });
         return;
       }
-      // iOS: session must allow recording (otherwise native layer rejects / no audio).
       await setAudioModeAsync({
         allowsRecording: true,
         playsInSilentMode: true,
@@ -153,10 +164,10 @@ export default function RecordScreen() {
         unit_price: up,
         total_amount: total,
       });
-      Toast.show({ type: "success", text1: t("confirm") });
       setReview(null);
       await queryClient.invalidateQueries({ queryKey: queryKeys.purchasesMe });
       await queryClient.invalidateQueries({ queryKey: queryKeys.alertsMe });
+      router.replace({ pathname: "/success", params: { flow: "purchase" } });
     } catch (e) {
       Toast.show({ type: "error", text1: t("error"), text2: String(e) });
     }
@@ -173,58 +184,45 @@ export default function RecordScreen() {
   const stepLabels = [t("stepChooseType"), t("stepRecord"), t("stepProcess"), t("readyForReview")];
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <View style={styles.stepsRow}>
-        {stepLabels.map((label, i) => (
-          <View
-            key={`step-${i}`}
-            style={[styles.stepPill, i <= stepActiveIndex && styles.stepPillActive]}
-          >
-            <Text
-              style={[styles.stepPillText, i <= stepActiveIndex && styles.stepPillTextActive]}
-              numberOfLines={2}
-            >
-              {label}
-            </Text>
-          </View>
-        ))}
-      </View>
+    <ScrollView style={styles.container} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <SectionTitle title={t("record")} subtitle={t("scanWorkflowHint")} />
+      <StepIndicator steps={stepLabels} activeIndex={stepActiveIndex} />
 
       <Text style={styles.label}>{t("selectType")}</Text>
-      <View style={styles.row}>
+      <View style={styles.segWrap}>
         <TouchableOpacity
-          style={[styles.txBtn, txType === "buy" && styles.txBtnActive]}
+          style={[styles.segSide, txType === "buy" && styles.segSideOn]}
           onPress={() => setTxType("buy")}
           accessibilityLabel={t("buy")}
           accessibilityRole="button"
+          accessibilityState={{ selected: txType === "buy" }}
         >
-          <Text style={[styles.txBtnText, txType === "buy" && styles.txBtnTextActive]} pointerEvents="none">{t("buy")}</Text>
+          <Text style={[styles.segTxt, txType === "buy" && styles.segTxtOn]}>{t("buy")}</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.txBtn, txType === "sell" && styles.txBtnActive]}
+          style={[styles.segSide, txType === "sell" && styles.segSideOn]}
           onPress={() => setTxType("sell")}
           accessibilityLabel={t("sell")}
           accessibilityRole="button"
+          accessibilityState={{ selected: txType === "sell" }}
         >
-          <Text style={[styles.txBtnText, txType === "sell" && styles.txBtnTextActive]} pointerEvents="none">{t("sell")}</Text>
+          <Text style={[styles.segTxt, txType === "sell" && styles.segTxtOn]}>{t("sell")}</Text>
         </TouchableOpacity>
       </View>
 
       {!review ? (
         <>
           {!isRecording ? (
-            <TouchableOpacity
-              style={[styles.recordBtn, (!txType || uploading || polling) && styles.recordBtnDisabled]}
+            <PrimaryButton
+              title={uploading || polling ? (polling ? t("processing") : t("uploadRecord")) : t("record")}
               onPress={startRecording}
+              loading={false}
               disabled={!txType || uploading || polling}
-              accessibilityLabel={uploading || polling ? (polling ? t("processing") : t("uploadRecord")) : t("record")}
-              accessibilityRole="button"
-            >
-              <Text style={styles.recordBtnText} pointerEvents="none">{uploading || polling ? (polling ? t("processing") : t("uploadRecord")) : t("record")}</Text>
-            </TouchableOpacity>
+              icon="mic-outline"
+            />
           ) : (
-            <TouchableOpacity style={styles.stopBtn} onPress={stopAndUpload} disabled={uploading} accessibilityLabel={t("stopRecord")} accessibilityRole="button">
-              {uploading ? <ActivityIndicator color="#fff" /> : <Text style={styles.stopBtnText} pointerEvents="none">{t("stopRecord")}</Text>}
+            <TouchableOpacity style={styles.stopBtn} onPress={stopAndUpload} disabled={uploading} accessibilityRole="button">
+              {uploading ? <ActivityIndicator color="#fff" /> : <Text style={styles.stopBtnText}>{t("stopRecord")}</Text>}
             </TouchableOpacity>
           )}
           {(uploading || polling) && (
@@ -233,9 +231,14 @@ export default function RecordScreen() {
               <Text style={styles.loadingText}>{t("processing")}</Text>
             </View>
           )}
+          {txType === null ? (
+            <InfoBanner variant="info" title={t("selectType")}>
+              {t("scanWorkflowHint")}
+            </InfoBanner>
+          ) : null}
         </>
       ) : (
-        <View style={styles.card}>
+        <Card style={styles.reviewCard}>
           <Text style={styles.cardTitle}>{t("readyForReview")}</Text>
           {!!review.transcription?.trim() && (
             <View style={styles.transcriptionBox}>
@@ -243,18 +246,50 @@ export default function RecordScreen() {
               <Text style={styles.transcriptionText}>{review.transcription}</Text>
             </View>
           )}
-          <TextInput style={styles.input} placeholder={t("productName")} value={form.product_name} onChangeText={(v) => setForm((f) => ({ ...f, product_name: v }))} placeholderTextColor={colors.textMuted} />
-          <TextInput style={styles.input} placeholder={t("category")} value={form.category} onChangeText={(v) => setForm((f) => ({ ...f, category: v }))} placeholderTextColor={colors.textMuted} />
-          <TextInput style={styles.input} placeholder={t("quantity")} value={form.quantity} onChangeText={(v) => setForm((f) => ({ ...f, quantity: v }))} keyboardType="numeric" placeholderTextColor={colors.textMuted} />
-          <TextInput style={styles.input} placeholder={t("unitPrice")} value={form.unit_price} onChangeText={(v) => setForm((f) => ({ ...f, unit_price: v }))} keyboardType="decimal-pad" placeholderTextColor={colors.textMuted} />
-          <TextInput style={styles.input} placeholder={t("totalAmount")} value={form.total_amount} onChangeText={(v) => setForm((f) => ({ ...f, total_amount: v }))} keyboardType="decimal-pad" placeholderTextColor={colors.textMuted} />
-          <TouchableOpacity style={styles.confirmBtn} onPress={handleConfirm}>
-            <Text style={styles.confirmBtnText}>{t("confirm")}</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.cancelBtn} onPress={() => setReview(null)}>
-            <Text style={styles.cancelBtnText}>{t("retry")}</Text>
-          </TouchableOpacity>
-        </View>
+          <FormField label={t("productName")}>
+            <TextFieldInput
+              value={form.product_name}
+              onChangeText={(v) => setForm((f) => ({ ...f, product_name: v }))}
+            />
+          </FormField>
+          <FormField label={t("category")}>
+            <TextFieldInput value={form.category} onChangeText={(v) => setForm((f) => ({ ...f, category: v }))} />
+          </FormField>
+          <FormField label={t("quantity")}>
+            <TextFieldInput
+              value={form.quantity}
+              onChangeText={(v) => setForm((f) => ({ ...f, quantity: v }))}
+              keyboardType="numeric"
+            />
+          </FormField>
+          <FormField label={t("unitPrice")}>
+            <TextFieldInput
+              value={form.unit_price}
+              onChangeText={(v) => setForm((f) => ({ ...f, unit_price: v }))}
+              keyboardType="decimal-pad"
+            />
+          </FormField>
+          <FormField label={t("totalAmount")}>
+            <TextFieldInput
+              value={form.total_amount}
+              onChangeText={(v) => setForm((f) => ({ ...f, total_amount: v }))}
+              keyboardType="decimal-pad"
+            />
+          </FormField>
+          <PrimaryButton title={t("confirm")} onPress={() => void handleConfirm()} icon="checkmark-circle-outline" />
+          <GhostButton
+            title={t("retry")}
+            onPress={() => {
+              void confirmAsync(t("confirmDiscardVoiceTitle"), t("confirmDiscardVoiceMessage"), {
+                confirmLabel: t("confirmDiscardVoiceConfirm"),
+                cancelLabel: t("cancel"),
+                destructive: true,
+              }).then((ok) => {
+                if (ok) setReview(null);
+              });
+            }}
+          />
+        </Card>
       )}
     </ScrollView>
   );
@@ -262,49 +297,48 @@ export default function RecordScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
-  content: { padding: 20, paddingBottom: 40 },
-  stepsRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 20 },
-  stepPill: {
-    flexGrow: 1,
-    minWidth: "47%",
-    backgroundColor: colors.surface,
-    borderRadius: 12,
-    paddingVertical: 10,
-    paddingHorizontal: 8,
+  content: { padding: space.lg, paddingBottom: space.xxxl },
+  label: { fontSize: font.sm, color: colors.textSecondary, marginBottom: space.sm, fontWeight: font.semibold },
+  segWrap: {
+    flexDirection: "row",
+    backgroundColor: colors.surfaceMuted,
+    borderRadius: radius.md,
+    padding: 4,
     borderWidth: 1,
     borderColor: colors.border,
+    marginBottom: space.lg,
   },
-  stepPillActive: { borderColor: colors.primary, backgroundColor: colors.surfaceMuted },
-  stepPillText: { fontSize: 11, color: colors.textMuted, textAlign: "center", fontWeight: "500" },
-  stepPillTextActive: { color: colors.primary, fontWeight: "700" },
-  label: { fontSize: 16, color: colors.text, marginBottom: 12, fontWeight: "500" },
-  row: { flexDirection: "row", gap: 12, marginBottom: 24 },
-  txBtn: { flex: 1, padding: 16, borderRadius: 12, backgroundColor: colors.surfaceMuted, alignItems: "center" },
-  txBtnActive: { backgroundColor: colors.primary },
-  txBtnText: { fontSize: 16, color: colors.text },
-  txBtnTextActive: { color: "#fff", fontWeight: "600" },
-  recordBtn: { backgroundColor: colors.accent, padding: 20, borderRadius: 12, alignItems: "center", marginBottom: 12 },
-  recordBtnDisabled: { opacity: 0.6 },
-  recordBtnText: { color: "#fff", fontSize: 16, fontWeight: "600" },
-  stopBtn: { backgroundColor: colors.error, padding: 20, borderRadius: 12, alignItems: "center", marginBottom: 12 },
-  stopBtnText: { color: "#fff", fontSize: 16, fontWeight: "600" },
-  loading: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 8 },
-  loadingText: { color: colors.textMuted, fontSize: 14 },
-  card: { backgroundColor: colors.surface, borderRadius: 20, padding: 20, marginTop: 16 },
-  cardTitle: { fontSize: 18, fontWeight: "600", color: colors.primary, marginBottom: 16 },
-  input: { borderWidth: 1, borderColor: colors.border, borderRadius: 12, padding: 14, marginBottom: 12, fontSize: 16, color: colors.text },
-  confirmBtn: { backgroundColor: colors.primary, padding: 16, borderRadius: 12, alignItems: "center", marginTop: 8 },
-  confirmBtnText: { color: "#fff", fontSize: 16, fontWeight: "600" },
-  cancelBtn: { marginTop: 12, alignItems: "center" },
-  cancelBtnText: { color: colors.primary, fontSize: 14 },
+  segSide: {
+    flex: 1,
+    paddingVertical: space.sm + 2,
+    alignItems: "center",
+    borderRadius: radius.sm,
+  },
+  segSideOn: { backgroundColor: colors.primary },
+  segTxt: { fontSize: font.md, fontWeight: font.semibold, color: colors.textSecondary },
+  segTxtOn: { color: "#fff", fontWeight: font.bold },
+  stopBtn: {
+    backgroundColor: colors.error,
+    padding: space.lg,
+    borderRadius: radius.md,
+    alignItems: "center",
+    marginBottom: space.md,
+    minHeight: 52,
+    justifyContent: "center",
+  },
+  stopBtnText: { color: "#fff", fontSize: font.md, fontWeight: font.bold },
+  loading: { flexDirection: "row", alignItems: "center", gap: space.sm, marginTop: space.sm, marginBottom: space.md },
+  loadingText: { color: colors.textMuted, fontSize: font.sm },
+  reviewCard: { marginTop: space.md },
+  cardTitle: { fontSize: font.xl, fontWeight: font.bold, color: colors.primaryDark, marginBottom: space.md },
   transcriptionBox: {
     backgroundColor: colors.surfaceMuted,
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 14,
+    borderRadius: radius.md,
+    padding: space.md,
+    marginBottom: space.md,
     borderWidth: 1,
     borderColor: colors.border,
   },
-  transcriptionLabel: { fontSize: 12, fontWeight: "600", color: colors.textMuted, marginBottom: 6 },
-  transcriptionText: { fontSize: 14, color: colors.text, lineHeight: 20 },
+  transcriptionLabel: { fontSize: font.xs, fontWeight: font.bold, color: colors.textMuted, marginBottom: space.xs },
+  transcriptionText: { fontSize: font.sm, color: colors.text, lineHeight: 22 },
 });

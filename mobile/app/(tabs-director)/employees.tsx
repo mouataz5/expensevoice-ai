@@ -12,11 +12,13 @@ import {
   ScrollView,
   KeyboardAvoidingView,
   Platform,
+  RefreshControl,
 } from "react-native";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "../../src/context/AuthContext";
 import { useLocale } from "../../src/context/LocaleContext";
 import { colors } from "../../src/theme/colors";
+import { font, radius, space } from "../../src/theme/tokens";
 import {
   fetchAdminUsers,
   fetchUsersMap,
@@ -27,6 +29,16 @@ import {
   type UserMapItem,
 } from "../../src/api/users";
 import Toast from "react-native-toast-message";
+import {
+  EmptyState,
+  ErrorState,
+  PrimaryButton,
+  ProductBrandMark,
+  UserAvatar,
+  UsersListSkeleton,
+} from "../../src/components/ui";
+import { AdminAccentStripe, AdminErrorShell, AdminHeader } from "../../src/components/admin";
+import { formatApiError } from "../../src/utils/apiError";
 
 const ROLES = ["employee", "director", "admin"] as const;
 
@@ -64,6 +76,7 @@ export default function DirectorEmployeesScreen() {
   const isLoading = isAdmin ? adminQ.isLoading : mapQ.isLoading;
   const error = isAdmin ? adminQ.error : mapQ.error;
   const refetch = isAdmin ? adminQ.refetch : mapQ.refetch;
+  const isRefetching = isAdmin ? adminQ.isRefetching : mapQ.isRefetching;
 
   const createM = useMutation({
     mutationFn: (payload: { email: string; password: string; role: string }) =>
@@ -76,11 +89,9 @@ export default function DirectorEmployeesScreen() {
       setAddPassword("");
       setAddRole("employee");
     },
-    onError: (e: { response?: { data?: { detail?: string } } }) => {
-      Toast.show({
-        type: "error",
-        text1: e?.response?.data?.detail ?? t("usersCreateFail"),
-      });
+    onError: (e: unknown) => {
+      const { message } = formatApiError(e, t);
+      Toast.show({ type: "error", text1: t("error"), text2: message || t("usersCreateFail") });
     },
   });
 
@@ -96,7 +107,10 @@ export default function DirectorEmployeesScreen() {
       Toast.show({ type: "success", text1: t("usersUpdated") });
       qc.invalidateQueries({ queryKey: ["admin-users"] });
     },
-    onError: () => Toast.show({ type: "error", text1: t("usersUpdateFail") }),
+    onError: (e: unknown) => {
+      const { message } = formatApiError(e, t);
+      Toast.show({ type: "error", text1: t("error"), text2: message || t("usersUpdateFail") });
+    },
   });
 
   const resetM = useMutation({
@@ -108,7 +122,10 @@ export default function DirectorEmployeesScreen() {
       setNewPassword("");
       qc.invalidateQueries({ queryKey: ["admin-users"] });
     },
-    onError: () => Toast.show({ type: "error", text1: t("usersResetFail") }),
+    onError: (e: unknown) => {
+      const { message } = formatApiError(e, t);
+      Toast.show({ type: "error", text1: t("error"), text2: message || t("usersResetFail") });
+    },
   });
 
   const handleRoleChange = (u: UserOut, role: string) => {
@@ -128,77 +145,80 @@ export default function DirectorEmployeesScreen() {
     );
   }
 
+  const errFmt = error ? formatApiError(error, t) : null;
+
   if (isLoading) {
     return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color={colors.primary} />
+      <View style={styles.container}>
+        <View style={styles.listHeaderPad}>
+          <AdminAccentStripe />
+          <ProductBrandMark title={t("appName")} subtitle={t("employees")} />
+        </View>
+        <UsersListSkeleton count={8} />
       </View>
     );
   }
 
-  if (error) {
+  if (error && errFmt) {
     return (
-      <View style={styles.centered}>
-        <Text style={styles.errorText}>{t("error")}</Text>
-        <TouchableOpacity style={styles.retryBtn} onPress={() => refetch()}>
-          <Text style={styles.retryBtnText}>{t("retry")}</Text>
-        </TouchableOpacity>
-      </View>
+      <AdminErrorShell>
+        <ErrorState
+          title={t("error")}
+          message={errFmt.message}
+          hint={errFmt.hint}
+          onRetry={() => refetch()}
+          retryLabel={t("retry")}
+        />
+      </AdminErrorShell>
     );
   }
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.title}>{t("employees")}</Text>
-        {isAdmin && (
-          <TouchableOpacity
-            style={styles.addBtn}
-            onPress={() => setAddOpen(true)}
-            accessibilityLabel={t("usersAddUser")}
-          >
-            <Text style={styles.addBtnText} pointerEvents="none">
-              {t("usersAddUser")}
-            </Text>
-          </TouchableOpacity>
-        )}
+      <View style={styles.listHeaderPad}>
+        <AdminAccentStripe />
+        <ProductBrandMark title={t("appName")} subtitle={t("employees")} />
+        <AdminHeader eyebrow={t("adminEyebrow")} subtitle={t("adminEmployeesWorkspaceSubtitle")} />
+        {isAdmin ? (
+          <PrimaryButton title={t("usersAddUser")} onPress={() => setAddOpen(true)} />
+        ) : null}
       </View>
 
-      {isDirector && (
-        <Text style={styles.hint}>{t("usersDirectorHint")}</Text>
-      )}
+      {isDirector ? <Text style={styles.hint}>{t("usersDirectorHint")}</Text> : null}
 
-      {list.length === 0 ? (
-        <View style={styles.empty}>
-          <Text style={styles.emptyTitle}>{t("usersNoUsers")}</Text>
-        </View>
-      ) : (
-        <FlatList
-          data={list}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={styles.list}
-          renderItem={({ item }) => (
-            <UserRow
-              item={item}
-              isAdmin={isAdmin}
-              resettingId={resettingId}
-              newPassword={newPassword}
-              setNewPassword={setNewPassword}
-              setResettingId={setResettingId}
-              onRoleChange={handleRoleChange}
-              onActiveChange={handleActiveChange}
-              onReset={() =>
-                newPassword
-                  ? resetM.mutate({ id: item.id, password: newPassword })
-                  : null
-              }
-              resetM={resetM}
-              updateM={updateM}
-              t={t}
-            />
-          )}
-        />
-      )}
+      <FlatList
+        data={list}
+        keyExtractor={(item) => item.id}
+        contentContainerStyle={[styles.list, list.length === 0 && styles.listFlex]}
+        refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} />}
+        ListEmptyComponent={
+          <EmptyState
+            icon="people-outline"
+            title={t("directorEmployeesEmpty")}
+            subtitle={isAdmin ? t("directorEmployeesEmptyHint") : t("usersDirectorHint")}
+            primaryCtaTitle={isAdmin ? t("usersAddUser") : t("retry")}
+            onPrimaryCta={isAdmin ? () => setAddOpen(true) : () => refetch()}
+          />
+        }
+        renderItem={({ item }) => (
+          <UserRow
+            item={item}
+            isAdmin={isAdmin}
+            resettingId={resettingId}
+            newPassword={newPassword}
+            setNewPassword={setNewPassword}
+            setResettingId={setResettingId}
+            onRoleChange={handleRoleChange}
+            onActiveChange={handleActiveChange}
+            onReset={() =>
+              newPassword ? resetM.mutate({ id: item.id, password: newPassword }) : null
+            }
+            resetM={resetM}
+            updateM={updateM}
+            t={t}
+          />
+        )}
+      />
 
       <Modal visible={addOpen} animationType="slide" transparent>
         <KeyboardAvoidingView
@@ -316,11 +336,29 @@ function UserRow({
   const hasActive = "is_active" in u;
   const isResetting = resettingId === item.id;
 
+  const roleTxt =
+    item.role === "admin"
+      ? t("roleAdmin")
+      : item.role === "director"
+        ? t("roleDirector")
+        : item.role === "employee"
+          ? t("roleEmployee")
+          : item.role;
+
   return (
     <View style={styles.row}>
-      <View style={styles.rowMain}>
-        <Text style={styles.rowEmail}>{item.email}</Text>
-        <Text style={styles.rowRole}>{item.role}</Text>
+      <View style={styles.rowTop}>
+        <UserAvatar
+          email={item.email}
+          size="sm"
+          role={item.role}
+          showRoleBadge
+          accessible={false}
+          style={styles.rowAvatar}
+        />
+        <View style={styles.rowMain}>
+          <Text style={styles.rowEmail}>{item.email}</Text>
+          <Text style={styles.rowRole}>{roleTxt}</Text>
         {hasActive && (
           <View style={styles.rowActive}>
             <Text style={styles.rowActiveLabel}>
@@ -337,6 +375,7 @@ function UserRow({
             )}
           </View>
         )}
+        </View>
       </View>
       {isAdmin && (
         <View style={styles.rowActions}>
@@ -416,54 +455,31 @@ function UserRow({
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
-  centered: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: colors.background,
-    padding: 24,
+  listHeaderPad: {
+    paddingHorizontal: space.lg,
+    paddingTop: space.md,
+    paddingBottom: space.sm,
+    gap: space.md,
   },
-  errorText: { fontSize: 18, color: colors.error, marginBottom: 12 },
-  retryBtn: {
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    backgroundColor: colors.primary,
-    borderRadius: 12,
-  },
-  retryBtnText: { color: "#fff", fontWeight: "600" },
-  header: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    padding: 16,
-    paddingBottom: 8,
-  },
-  title: { fontSize: 20, fontWeight: "700", color: colors.primary },
-  addBtn: {
-    backgroundColor: colors.primary,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 12,
-  },
-  addBtnText: { color: "#fff", fontWeight: "600" },
   hint: {
-    fontSize: 14,
+    fontSize: font.sm,
     color: colors.textMuted,
-    paddingHorizontal: 16,
-    marginBottom: 8,
+    paddingHorizontal: space.lg,
+    marginBottom: space.sm,
   },
-  list: { padding: 16, paddingBottom: 40 },
-  empty: { flex: 1, justifyContent: "center", alignItems: "center", padding: 24 },
-  emptyTitle: { fontSize: 16, color: colors.textMuted },
+  list: { paddingHorizontal: space.lg, paddingBottom: space.xxxl },
+  listFlex: { flexGrow: 1 },
   row: {
     backgroundColor: colors.surface,
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 12,
+    borderRadius: radius.lg,
+    padding: space.md,
+    marginBottom: space.md,
     borderWidth: 1,
     borderColor: colors.border,
   },
-  rowMain: { marginBottom: 8 },
+  rowTop: { flexDirection: "row", alignItems: "flex-start", marginBottom: space.sm },
+  rowAvatar: { marginRight: space.md, marginTop: 2 },
+  rowMain: { flex: 1, minWidth: 0, marginBottom: 0 },
   rowEmail: { fontSize: 16, fontWeight: "600", color: colors.text },
   rowRole: { fontSize: 14, color: colors.textMuted, marginTop: 4 },
   rowActive: {

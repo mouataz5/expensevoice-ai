@@ -1,34 +1,30 @@
 import { useQuery } from "@tanstack/react-query";
-import { View, Text, StyleSheet, FlatList, ActivityIndicator, RefreshControl, TouchableOpacity } from "react-native";
+import { View, Text, StyleSheet, FlatList, RefreshControl, TouchableOpacity } from "react-native";
 import { useRouter } from "expo-router";
 import { useLocale } from "../../src/context/LocaleContext";
 import { colors } from "../../src/theme/colors";
+import { font, radius, shadow, space } from "../../src/theme/tokens";
 import { listMyPurchases, type PurchaseOut } from "../../src/api/purchases";
 import { queryKeys } from "../../src/queryKeys";
-
-function purchaseStatusColors(status: string): { bg: string; fg: string } {
-  switch (status) {
-    case "approved":
-      return { bg: "#DCFCE7", fg: colors.success };
-    case "ready_for_review":
-      return { bg: "#FEF3C7", fg: colors.warning };
-    case "rejected":
-      return { bg: "#FEE2E2", fg: colors.error };
-    default:
-      return { bg: colors.surfaceMuted, fg: colors.textMuted };
-  }
-}
-
-function purchaseRowChip(item: PurchaseOut): { bg: string; fg: string; label: string } {
+import {
+  EmptyState,
+  ErrorState,
+  StatusPill,
+  InvoiceListSkeleton,
+  ProductBrandMark,
+} from "../../src/components/ui";
+import { formatApiError } from "../../src/utils/apiError";
+function purchaseChipMeta(item: PurchaseOut): { label: string; tone: "neutral" | "success" | "warning" | "danger" | "info" } {
   if (item.processing_status === "processing") {
-    return { bg: "#E0E7FF", fg: "#3730A3", label: "__voiceSttProcessing__" };
+    return { label: "__voiceSttProcessing__", tone: "info" };
   }
   if (item.processing_status === "ready_for_review" && item.status === "pending") {
-    const c = purchaseStatusColors("ready_for_review");
-    return { ...c, label: "__readyForReview__" };
+    return { label: "__readyForReview__", tone: "warning" };
   }
-  const c = purchaseStatusColors(item.status);
-  return { ...c, label: item.status };
+  if (item.status === "approved") return { label: item.status, tone: "success" };
+  if (item.status === "rejected") return { label: item.status, tone: "danger" };
+  if (item.status === "ready_for_review") return { label: item.status, tone: "warning" };
+  return { label: item.status, tone: "neutral" };
 }
 
 function PurchaseRow({
@@ -40,20 +36,26 @@ function PurchaseRow({
   onPress: () => void;
   t: (k: string) => string;
 }) {
-  const chip = purchaseRowChip(item);
+  const meta = purchaseChipMeta(item);
   const chipText =
-    chip.label === "__voiceSttProcessing__"
+    meta.label === "__voiceSttProcessing__"
       ? t("voiceSttProcessing")
-      : chip.label === "__readyForReview__"
+      : meta.label === "__readyForReview__"
         ? t("readyForReview")
-        : chip.label;
+        : meta.label;
   return (
-    <TouchableOpacity style={styles.row} onPress={onPress} activeOpacity={0.85}>
-      <Text style={styles.rowTitle} numberOfLines={1}>{item.product_name || "—"}</Text>
-      <Text style={styles.rowMeta}>{item.category ?? ""} · {item.quantity} × {item.unit_price}</Text>
-      <Text style={styles.rowAmount}>{item.total_amount} TND</Text>
-      <View style={[styles.statusChip, { backgroundColor: chip.bg }]}>
-        <Text style={[styles.statusChipText, { color: chip.fg }]}>{chipText}</Text>
+    <TouchableOpacity style={styles.rowWrap} onPress={onPress} activeOpacity={0.92}>
+      <View style={styles.row}>
+        <Text style={styles.rowTitle} numberOfLines={1}>
+          {item.product_name || "—"}
+        </Text>
+        <Text style={styles.rowMeta}>
+          {item.category ?? "—"} · {item.quantity} × {item.unit_price}
+        </Text>
+        <View style={styles.rowBottom}>
+          <Text style={styles.rowAmount}>{item.total_amount} TND</Text>
+          <StatusPill label={chipText} tone={meta.tone} />
+        </View>
       </View>
     </TouchableOpacity>
   );
@@ -67,20 +69,28 @@ export default function PurchasesScreen() {
     queryFn: listMyPurchases,
   });
 
+  const errFmt = error ? formatApiError(error, t) : null;
+
   if (isLoading) {
     return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color={colors.primary} />
+      <View style={styles.container}>
+        <View style={styles.listPad}>
+          <ProductBrandMark title={t("appName")} subtitle={t("myPurchases")} />
+        </View>
+        <InvoiceListSkeleton count={6} />
       </View>
     );
   }
 
-  if (error) {
+  if (error && errFmt) {
     return (
-      <View style={styles.centered}>
-        <Text style={styles.errorText}>{t("error")}</Text>
-        <Text style={styles.errorSub}>{String(error)}</Text>
-      </View>
+      <ErrorState
+        title={t("error")}
+        message={errFmt.message}
+        hint={errFmt.hint}
+        onRetry={() => refetch()}
+        retryLabel={t("retry")}
+      />
     );
   }
 
@@ -88,12 +98,22 @@ export default function PurchasesScreen() {
     return (
       <FlatList
         data={[]}
-        renderItem={() => null}
-        ListEmptyComponent={
-          <View style={styles.centered}>
-            <Text style={styles.emptyTitle}>{t("noPurchases")}</Text>
-            <Text style={styles.emptySub}>{t("emptyList")}</Text>
+        renderItem={() => <View />}
+        ListHeaderComponent={
+          <View style={styles.listPad}>
+            <ProductBrandMark title={t("appName")} subtitle={t("myPurchases")} />
           </View>
+        }
+        ListEmptyComponent={
+          <EmptyState
+            icon="cart-outline"
+            title={t("noPurchases")}
+            subtitle={t("emptyPurchasesBody")}
+            primaryCtaTitle={t("emptyPurchasesCtaPrimary")}
+            onPrimaryCta={() => router.push("/(tabs)/record")}
+            secondaryCtaTitle={t("emptyPurchasesCtaSecondary")}
+            onSecondaryCta={() => router.push("/(tabs)/voice-studio")}
+          />
         }
         refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} />}
         contentContainerStyle={[styles.list, styles.listFlex]}
@@ -106,6 +126,11 @@ export default function PurchasesScreen() {
     <FlatList
       data={purchases}
       keyExtractor={(item) => item.id}
+      ListHeaderComponent={
+        <View style={styles.listPad}>
+          <ProductBrandMark title={t("appName")} subtitle={t("myPurchases")} />
+        </View>
+      }
       renderItem={({ item }) => (
         <PurchaseRow item={item} onPress={() => router.push(`/(tabs)/purchases/${item.id}`)} t={t} />
       )}
@@ -118,24 +143,20 @@ export default function PurchasesScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
-  list: { padding: 16, paddingBottom: 40 },
+  listPad: { paddingHorizontal: space.lg, paddingTop: space.md, paddingBottom: space.sm },
+  list: { padding: space.lg, paddingBottom: space.xxxl },
   listFlex: { flexGrow: 1 },
-  centered: { flex: 1, justifyContent: "center", alignItems: "center", padding: 24, backgroundColor: colors.background },
+  rowWrap: { marginBottom: space.md },
   row: {
     backgroundColor: colors.surface,
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 12,
+    borderRadius: radius.lg,
+    padding: space.lg,
     borderWidth: 1,
     borderColor: colors.border,
+    ...shadow.card,
   },
-  rowTitle: { fontSize: 16, fontWeight: "600", color: colors.text, marginBottom: 4 },
-  rowMeta: { fontSize: 14, color: colors.textMuted, marginBottom: 4 },
-  rowAmount: { fontSize: 15, fontWeight: "600", color: colors.primary },
-  statusChip: { alignSelf: "flex-start", marginTop: 8, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
-  statusChipText: { fontSize: 12, fontWeight: "600" },
-  errorText: { fontSize: 18, color: colors.error, marginBottom: 8 },
-  errorSub: { fontSize: 14, color: colors.textMuted },
-  emptyTitle: { fontSize: 18, fontWeight: "600", color: colors.text, marginBottom: 8 },
-  emptySub: { fontSize: 14, color: colors.textMuted },
+  rowTitle: { fontSize: font.md, fontWeight: font.bold, color: colors.text, marginBottom: space.xs },
+  rowMeta: { fontSize: font.sm, color: colors.textMuted, marginBottom: space.sm },
+  rowBottom: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: space.sm },
+  rowAmount: { fontSize: font.lg, fontWeight: font.bold, color: colors.primary },
 });

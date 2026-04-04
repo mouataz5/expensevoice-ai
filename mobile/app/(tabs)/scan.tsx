@@ -1,20 +1,38 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
   TouchableOpacity,
   StyleSheet,
   Image,
-  ActivityIndicator,
-  ScrollView,
   Linking,
   Modal,
-  TextInput,
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
+import { useRouter } from "expo-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { useLocale } from "../../src/context/LocaleContext";
 import { colors } from "../../src/theme/colors";
+import { font, radius, space } from "../../src/theme/tokens";
+import {
+  ScreenScroll,
+  SectionTitle,
+  StepIndicator,
+  Card,
+  InfoBanner,
+  ConfidenceBar,
+  PrimaryButton,
+  SecondaryButton,
+  GhostButton,
+  FormField,
+  TextFieldInput,
+  ScanQualityBadge,
+  ScanQualityBanner,
+  ScanTipsCard,
+  RetakeRecommendationCard,
+  ScanPreviewFrame,
+} from "../../src/components/ui";
+import { analyzeScanImageQuality, type ScanQualityResult } from "../../src/lib/scanImageQuality";
 import {
   applyInvoiceCorrections,
   getInvoice,
@@ -29,6 +47,8 @@ import Toast from "react-native-toast-message";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
 import { getStoredToken } from "../../src/lib/secure-store";
+import { confirmAsync } from "../../src/lib/confirm";
+import { SuccessCelebration } from "../../src/components/ui/SuccessCelebration";
 
 type TxType = "buy" | "sell" | null;
 
@@ -46,6 +66,7 @@ function fmtTnAmount(val: number | null | undefined): string {
 
 export default function ScanScreen() {
   const { t } = useLocale();
+  const router = useRouter();
   const queryClient = useQueryClient();
   const [txType, setTxType] = useState<TxType>(null);
   const [imageUri, setImageUri] = useState<string | null>(null);
@@ -60,6 +81,57 @@ export default function ScanScreen() {
   const [editInvoiceDate, setEditInvoiceDate] = useState("");
   const [editTotal, setEditTotal] = useState("");
   const [editCurrency, setEditCurrency] = useState("TND");
+  const [showScanSuccess, setShowScanSuccess] = useState(false);
+  const [scanQuality, setScanQuality] = useState<ScanQualityResult | null>(null);
+  const [qualityAnalyzing, setQualityAnalyzing] = useState(false);
+  const [userAcknowledgedPoor, setUserAcknowledgedPoor] = useState(false);
+
+  useEffect(() => {
+    if (!imageUri || ready) {
+      if (!imageUri) {
+        setScanQuality(null);
+        setQualityAnalyzing(false);
+        setUserAcknowledgedPoor(false);
+      }
+      return;
+    }
+    let cancelled = false;
+    setUserAcknowledgedPoor(false);
+    setQualityAnalyzing(true);
+    setScanQuality(null);
+    void analyzeScanImageQuality(imageUri)
+      .then((r) => {
+        if (cancelled) return;
+        setScanQuality(r);
+        setQualityAnalyzing(false);
+        if (r.level === "fair") {
+          Toast.show({
+            type: "info",
+            text1: t("scanQualityFair"),
+            text2: t("scanToastFair"),
+          });
+        } else if (r.level === "poor") {
+          Toast.show({
+            type: "info",
+            text1: t("scanQualityPoor"),
+            text2: t("scanToastPoor"),
+          });
+        }
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setQualityAnalyzing(false);
+        setScanQuality({
+          level: "fair",
+          issues: ["hard_to_read"],
+          primaryIssue: "hard_to_read",
+          pixelsAnalyzed: false,
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [imageUri, ready, t]);
 
   const pollUntilReady = async (id: string): Promise<boolean> => {
     let failed = false;
@@ -78,6 +150,7 @@ export default function ScanScreen() {
           /* preview optional */
         }
         void queryClient.invalidateQueries({ queryKey: queryKeys.invoicesMe });
+        setShowScanSuccess(true);
         return true;
       }
       if (inv.status === "failed") {
@@ -131,6 +204,8 @@ export default function ScanScreen() {
 
   const uploadAndPoll = async () => {
     if (!imageUri || txType === null) return;
+    if (qualityAnalyzing) return;
+    if (scanQuality?.level === "poor" && !userAcknowledgedPoor) return;
     setProcessing(true);
     setStatus("processing");
     setPreview(null);
@@ -214,11 +289,33 @@ export default function ScanScreen() {
   };
 
   const reset = () => {
+    void (async () => {
+      const hasWork = Boolean(imageUri || invoiceId || ready);
+      if (hasWork) {
+        const ok = await confirmAsync(t("confirmResetScanTitle"), t("confirmResetScanMessage"), {
+          confirmLabel: t("confirmResetScanConfirm"),
+          cancelLabel: t("cancel"),
+          destructive: true,
+        });
+        if (!ok) return;
+      }
+      setImageUri(null);
+      setInvoiceId(null);
+      setStatus("");
+      setReady(false);
+      setPreview(null);
+      setShowScanSuccess(false);
+      setScanQuality(null);
+      setUserAcknowledgedPoor(false);
+      setQualityAnalyzing(false);
+    })();
+  };
+
+  const clearScanImage = () => {
     setImageUri(null);
-    setInvoiceId(null);
-    setStatus("");
-    setReady(false);
-    setPreview(null);
+    setScanQuality(null);
+    setUserAcknowledgedPoor(false);
+    setQualityAnalyzing(false);
   };
 
   const scanStepActiveIndex = useMemo(() => {
@@ -232,115 +329,175 @@ export default function ScanScreen() {
   const scanStepLabels = [t("stepChooseType"), t("stepMedia"), t("stepSend"), t("stepResult")];
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <>
+      <SuccessCelebration
+        visible={showScanSuccess}
+        title={t("scanSuccessTitle")}
+        subtitle={t("scanSuccessScreenSubtitle")}
+        primaryLabel={t("scanSuccessContinueReview")}
+        onPrimary={() => setShowScanSuccess(false)}
+        secondaryLabel={t("scanSuccessViewInvoices")}
+        onSecondary={() => {
+          setShowScanSuccess(false);
+          router.push("/(tabs)/invoices");
+        }}
+      />
       <Modal visible={editOpen} animationType="slide" transparent>
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>{t("manualEdit")}</Text>
-            <Text style={styles.modalLabel}>Fournisseur</Text>
-            <TextInput
-              style={styles.modalInput}
-              value={editSupplier}
-              onChangeText={setEditSupplier}
-              placeholder="supplier_name"
-            />
-            <Text style={styles.modalLabel}>N° facture</Text>
-            <TextInput
-              style={styles.modalInput}
-              value={editInvoiceNumber}
-              onChangeText={setEditInvoiceNumber}
-            />
-            <Text style={styles.modalLabel}>Date (YYYY-MM-DD)</Text>
-            <TextInput
-              style={styles.modalInput}
-              value={editInvoiceDate}
-              onChangeText={setEditInvoiceDate}
-              placeholder="2026-01-16"
-            />
-            <Text style={styles.modalLabel}>Total TTC</Text>
-            <TextInput
-              style={styles.modalInput}
-              value={editTotal}
-              onChangeText={setEditTotal}
-              keyboardType="decimal-pad"
-            />
-            <Text style={styles.modalLabel}>Devise</Text>
-            <TextInput
-              style={styles.modalInput}
-              value={editCurrency}
-              onChangeText={setEditCurrency}
-            />
+            <FormField label={t("supplierLabel")}>
+              <TextFieldInput value={editSupplier} onChangeText={setEditSupplier} placeholder="supplier_name" />
+            </FormField>
+            <FormField label={t("invoiceNumber")}>
+              <TextFieldInput value={editInvoiceNumber} onChangeText={setEditInvoiceNumber} />
+            </FormField>
+            <FormField label={`${t("invoiceDate")} (YYYY-MM-DD)`}>
+              <TextFieldInput value={editInvoiceDate} onChangeText={setEditInvoiceDate} placeholder="2026-01-16" />
+            </FormField>
+            <FormField label={t("totalAmount")}>
+              <TextFieldInput value={editTotal} onChangeText={setEditTotal} keyboardType="decimal-pad" />
+            </FormField>
+            <FormField label={t("settingsCurrency")}>
+              <TextFieldInput value={editCurrency} onChangeText={setEditCurrency} />
+            </FormField>
             <View style={styles.modalActions}>
-              <TouchableOpacity style={styles.modalCancel} onPress={() => setEditOpen(false)} accessibilityRole="button">
-                <Text style={styles.modalCancelText}>{t("cancel")}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.modalSave} onPress={() => void saveManualCorrections()} accessibilityRole="button">
-                <Text style={styles.modalSaveText}>{t("saveCorrections")}</Text>
-              </TouchableOpacity>
+              <GhostButton title={t("cancel")} onPress={() => setEditOpen(false)} />
+              <PrimaryButton title={t("saveCorrections")} onPress={() => void saveManualCorrections()} />
             </View>
           </View>
         </View>
       </Modal>
-      <View style={styles.stepsRow}>
-        {scanStepLabels.map((label, i) => (
-          <View key={`scan-step-${i}`} style={[styles.stepPill, i <= scanStepActiveIndex && styles.stepPillActive]}>
-            <Text
-              style={[styles.stepPillText, i <= scanStepActiveIndex && styles.stepPillTextActive]}
-              numberOfLines={2}
-            >
-              {label}
-            </Text>
-          </View>
-        ))}
-      </View>
+      <ScreenScroll contentStyle={styles.content}>
+        <SectionTitle title={t("scanInvoice")} subtitle={t("scanWorkflowHint")} />
+        <StepIndicator steps={scanStepLabels} activeIndex={scanStepActiveIndex} />
 
-      <Text style={styles.label}>{t("selectType")}</Text>
-      <View style={styles.row}>
-        <TouchableOpacity style={[styles.txBtn, txType === "buy" && styles.txBtnActive]} onPress={() => setTxType("buy")} accessibilityLabel={t("buy")} accessibilityRole="button">
-          <Text style={[styles.txBtnText, txType === "buy" && styles.txBtnTextActive]} pointerEvents="none">{t("buy")}</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={[styles.txBtn, txType === "sell" && styles.txBtnActive]} onPress={() => setTxType("sell")} accessibilityLabel={t("sell")} accessibilityRole="button">
-          <Text style={[styles.txBtnText, txType === "sell" && styles.txBtnTextActive]} pointerEvents="none">{t("sell")}</Text>
-        </TouchableOpacity>
-      </View>
-
-      {!imageUri ? (
-        <View style={styles.uploadRow}>
-          <TouchableOpacity style={[styles.uploadBtn, (!txType || processing) && styles.uploadBtnDisabled]} onPress={pickImage} disabled={!txType || processing} accessibilityLabel={t("pickImage")} accessibilityRole="button">
-            <Text style={styles.uploadBtnText} pointerEvents="none">{t("pickImage")}</Text>
+        <Text style={styles.label}>{t("selectType")}</Text>
+        <View style={styles.segWrap}>
+          <TouchableOpacity
+            style={[styles.segSide, txType === "buy" && styles.segSideOn]}
+            onPress={() => setTxType("buy")}
+            accessibilityLabel={t("buy")}
+            accessibilityRole="button"
+            accessibilityState={{ selected: txType === "buy" }}
+          >
+            <Text style={[styles.segTxt, txType === "buy" && styles.segTxtOn]}>{t("buy")}</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.uploadBtn, (!txType || processing) && styles.uploadBtnDisabled]} onPress={takePhoto} disabled={!txType || processing} accessibilityLabel={t("takePhoto")} accessibilityRole="button">
-            <Text style={styles.uploadBtnText} pointerEvents="none">{t("takePhoto")}</Text>
+          <TouchableOpacity
+            style={[styles.segSide, txType === "sell" && styles.segSideOn]}
+            onPress={() => setTxType("sell")}
+            accessibilityLabel={t("sell")}
+            accessibilityRole="button"
+            accessibilityState={{ selected: txType === "sell" }}
+          >
+            <Text style={[styles.segTxt, txType === "sell" && styles.segTxtOn]}>{t("sell")}</Text>
           </TouchableOpacity>
         </View>
-      ) : (
+
+        {!imageUri ? (
+          <View style={styles.uploadRow}>
+            <View style={styles.uploadHalf}>
+              <SecondaryButton
+                title={t("pickImage")}
+                onPress={() => void pickImage()}
+                disabled={!txType || processing}
+                icon="images-outline"
+              />
+            </View>
+            <View style={styles.uploadHalf}>
+              <SecondaryButton
+                title={t("takePhoto")}
+                onPress={() => void takePhoto()}
+                disabled={!txType || processing}
+                icon="camera-outline"
+              />
+            </View>
+          </View>
+        ) : (
         <>
-          <Image source={{ uri: imageUri }} style={styles.preview} />
+          <View style={styles.previewHeaderRow}>
+            <Text style={styles.previewLabel}>{t("scanPreviewLabel")}</Text>
+            <ScanQualityBadge
+              level={scanQuality?.level ?? null}
+              analyzing={qualityAnalyzing}
+              t={t}
+            />
+          </View>
+          <Card style={styles.previewCard}>
+            <ScanPreviewFrame>
+              <Image source={{ uri: imageUri }} style={styles.preview} resizeMode="contain" />
+            </ScanPreviewFrame>
+          </Card>
           {!ready ? (
             <>
-              <TouchableOpacity style={[styles.submitBtn, processing && styles.submitBtnDisabled]} onPress={uploadAndPoll} disabled={processing} accessibilityLabel={t("uploadInvoice")} accessibilityRole="button">
-                {processing ? <ActivityIndicator color="#fff" /> : <Text style={styles.submitBtnText} pointerEvents="none">{t("uploadInvoice")}</Text>}
-              </TouchableOpacity>
-              {processing && <Text style={styles.statusText}>{t("processing")} — {status}</Text>}
+              {scanQuality && !qualityAnalyzing ? (
+                <ScanQualityBanner
+                  level={scanQuality.level}
+                  primaryIssue={scanQuality.primaryIssue}
+                  t={t}
+                />
+              ) : null}
+              {scanQuality?.level === "poor" && !userAcknowledgedPoor && !qualityAnalyzing ? (
+                <RetakeRecommendationCard
+                  t={t}
+                  onRetake={clearScanImage}
+                  onContinueAnyway={() => setUserAcknowledgedPoor(true)}
+                />
+              ) : null}
+              <ScanTipsCard t={t} />
+              <PrimaryButton
+                title={processing ? t("processing") : t("uploadInvoice")}
+                onPress={() => void uploadAndPoll()}
+                loading={processing}
+                disabled={
+                  processing ||
+                  qualityAnalyzing ||
+                  (scanQuality?.level === "poor" && !userAcknowledgedPoor)
+                }
+                icon="cloud-upload-outline"
+              />
+              {scanQuality &&
+              !qualityAnalyzing &&
+              (scanQuality.level !== "poor" || userAcknowledgedPoor) ? (
+                <View style={styles.retakeRow}>
+                  <SecondaryButton
+                    title={t("scanRetakePhoto")}
+                    onPress={clearScanImage}
+                    disabled={processing}
+                    icon="camera-outline"
+                  />
+                </View>
+              ) : null}
+              {processing ? (
+                <Text style={styles.statusText}>
+                  {t("processing")} — {status}
+                </Text>
+              ) : null}
             </>
           ) : (
             <>
+              <View style={styles.successBannerWrap}>
+                <InfoBanner variant="success" title={t("scanSuccessTitle")}>
+                  {t("scanSuccessBody")}
+                </InfoBanner>
+              </View>
               {preview && (
-                <View style={styles.reviewCard}>
+                <Card style={styles.reviewCard}>
                   <Text style={styles.reviewTitle}>{t("readyForReview")}</Text>
                   {((preview.ocr_text?.length ?? 0) < MIN_OCR_CHARS_WARN ||
                     !!(preview.extraction_error && String(preview.extraction_error).trim())) && (
-                    <Text style={styles.warningText}>
+                    <InfoBanner variant="warning" title={t("warningsTitle")}>
                       {(preview.ocr_text?.length ?? 0) < MIN_OCR_CHARS_WARN
                         ? t("scanOcrWeak")
                         : `${t("scanExtractionWarning")}: ${preview.extraction_error}`}
-                    </Text>
+                    </InfoBanner>
                   )}
-                  {(preview.global_confidence ?? preview.confidence) > 0 && (
-                    <Text style={styles.confidenceText}>
-                      {t("confidence")}: {Math.round((preview.global_confidence ?? preview.confidence) * 100)}%
-                    </Text>
-                  )}
+                  {(preview.global_confidence ?? preview.confidence) > 0 ? (
+                    <View style={styles.confBlock}>
+                      <Text style={styles.confLabel}>{t("confidence")}</Text>
+                      <ConfidenceBar value={preview.global_confidence ?? preview.confidence ?? 0} />
+                    </View>
+                  ) : null}
                   {(["supplier_name", "invoice_number", "invoice_date", "total_amount"] as const).map((k) => {
                     const v = preview.field_confidence?.[k];
                     if (v == null || v <= 0) return null;
@@ -350,35 +507,37 @@ export default function ScanScreen() {
                       </Text>
                     );
                   })}
-                  {preview.warnings && preview.warnings.length > 0 ? (
-                    <>
-                      <Text style={styles.sectionLabel}>{t("warningsTitle")}</Text>
-                      {preview.warnings.map((w, i) => (
-                        <Text key={`w-${i}`} style={styles.warningText}>
-                          • {w}
-                        </Text>
-                      ))}
-                    </>
-                  ) : null}
+                  {preview.warnings && preview.warnings.length > 0
+                    ? preview.warnings.map((w, i) => (
+                        <InfoBanner key={`w-${i}`} variant="warning" title={t("warningsTitle")}>
+                          {w}
+                        </InfoBanner>
+                      ))
+                    : null}
                   {preview.missing_fields && preview.missing_fields.length > 0 ? (
-                    <>
-                      <Text style={styles.sectionLabel}>{t("missingFieldsTitle")}</Text>
-                      <Text style={styles.reviewMuted}>{preview.missing_fields.join(", ")}</Text>
-                    </>
+                    <InfoBanner variant="error" title={t("missingFieldsTitle")}>
+                      {preview.missing_fields.join(", ")}
+                    </InfoBanner>
                   ) : null}
-                  <Text style={styles.sectionLabel}>Fournisseur</Text>
+                  <Text style={styles.sectionLabel}>{t("supplierLabel")}</Text>
                   {preview.supplier_name ? (
                     <Text style={styles.reviewRow}>{preview.supplier_name}</Text>
                   ) : (
                     <Text style={styles.reviewMuted}>—</Text>
                   )}
                   {preview.invoice_number ? (
-                    <Text style={styles.reviewRow}><Text style={styles.reviewLabel}>N°: </Text>{preview.invoice_number}</Text>
+                    <Text style={styles.reviewRow}>
+                      <Text style={styles.reviewLabel}>{t("invoiceNumber")}: </Text>
+                      {preview.invoice_number}
+                    </Text>
                   ) : null}
                   {preview.invoice_date ? (
-                    <Text style={styles.reviewRow}><Text style={styles.reviewLabel}>Date: </Text>{preview.invoice_date}</Text>
+                    <Text style={styles.reviewRow}>
+                      <Text style={styles.reviewLabel}>{t("invoiceDate")}: </Text>
+                      {preview.invoice_date}
+                    </Text>
                   ) : null}
-                  <Text style={styles.sectionLabel}>Lignes</Text>
+                  <Text style={styles.sectionLabel}>{t("invoiceLines")}</Text>
                   {preview.items?.length ? (
                     <View style={styles.itemsBlock}>
                       {preview.items.map((item, idx) => (
@@ -397,158 +556,135 @@ export default function ScanScreen() {
                   ) : (
                     <Text style={styles.reviewMuted}>—</Text>
                   )}
-                  <Text style={styles.sectionLabel}>Totaux</Text>
+                  <Text style={styles.sectionLabel}>{t("totalAmount")}</Text>
                   <Text style={styles.totalRow}>
-                    <Text style={styles.reviewLabel}>Net à payer: </Text>
+                    <Text style={styles.reviewLabel}>{t("netToPay")}: </Text>
                     {fmtTnAmount(
                       preview.total_ttc ?? preview.totals?.ttc ?? null,
                     )}{" "}
                     {preview.currency}
                   </Text>
                   <View style={styles.actionRow}>
-                    <TouchableOpacity style={styles.secondaryBtn} onPress={openManualEdit} accessibilityRole="button">
-                      <Text style={styles.secondaryBtnText}>{t("manualEdit")}</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.secondaryBtn, processing && styles.secondaryBtnDisabled]}
-                      onPress={() => void onRetryExtraction()}
-                      disabled={processing}
-                      accessibilityRole="button"
-                    >
-                      <Text style={styles.secondaryBtnText}>{t("retryExtraction")}</Text>
-                    </TouchableOpacity>
+                    <View style={styles.actionHalf}>
+                      <SecondaryButton title={t("manualEdit")} onPress={openManualEdit} icon="create-outline" />
+                    </View>
+                    <View style={styles.actionHalf}>
+                      <SecondaryButton
+                        title={t("retryExtraction")}
+                        onPress={() => void onRetryExtraction()}
+                        disabled={processing}
+                        icon="refresh-outline"
+                      />
+                    </View>
                   </View>
                   {typeof __DEV__ !== "undefined" && __DEV__ && preview.normalized_text ? (
                     <Text style={styles.debugText} numberOfLines={10}>
                       {t("debugNormalizedOcr")}: {preview.normalized_text.slice(0, 800)}
                     </Text>
                   ) : null}
-                </View>
+                </Card>
               )}
-              <TouchableOpacity style={styles.pdfBtn} onPress={downloadPdf} accessibilityLabel={t("downloadPdf")} accessibilityRole="button">
-                <Text style={styles.pdfBtnText} pointerEvents="none">{t("downloadPdf")}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.resetBtn} onPress={reset} accessibilityLabel={t("newInvoice")} accessibilityRole="button">
-                <Text style={styles.resetBtnText} pointerEvents="none">{t("newInvoice")}</Text>
-              </TouchableOpacity>
+              <PrimaryButton title={t("downloadPdf")} onPress={() => void downloadPdf()} icon="document-attach-outline" />
+              <GhostButton title={t("newInvoice")} onPress={reset} />
             </>
           )}
         </>
       )}
-    </ScrollView>
+      </ScreenScroll>
+    </>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background },
-  content: { padding: 20, paddingBottom: 40 },
-  stepsRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 20 },
-  stepPill: {
-    flexGrow: 1,
-    minWidth: "47%",
-    backgroundColor: colors.surface,
-    borderRadius: 12,
-    paddingVertical: 10,
-    paddingHorizontal: 8,
+  content: { paddingBottom: space.xxxl },
+  successBannerWrap: { marginBottom: space.md },
+  label: { fontSize: font.sm, color: colors.textSecondary, marginBottom: space.sm, marginTop: space.md, fontWeight: font.semibold },
+  segWrap: {
+    flexDirection: "row",
+    backgroundColor: colors.surfaceMuted,
+    borderRadius: radius.md,
+    padding: 4,
     borderWidth: 1,
     borderColor: colors.border,
+    marginBottom: space.lg,
   },
-  stepPillActive: { borderColor: colors.primary, backgroundColor: colors.surfaceMuted },
-  stepPillText: { fontSize: 11, color: colors.textMuted, textAlign: "center", fontWeight: "500" },
-  stepPillTextActive: { color: colors.primary, fontWeight: "700" },
-  label: { fontSize: 16, color: colors.text, marginBottom: 12, fontWeight: "500" },
-  row: { flexDirection: "row", gap: 12, marginBottom: 24 },
-  txBtn: { flex: 1, padding: 16, borderRadius: 12, backgroundColor: colors.surfaceMuted, alignItems: "center" },
-  txBtnActive: { backgroundColor: colors.primary },
-  txBtnText: { fontSize: 16, color: colors.text },
-  txBtnTextActive: { color: "#fff", fontWeight: "600" },
-  uploadRow: { flexDirection: "row", gap: 12, marginBottom: 12 },
-  uploadBtn: { flex: 1, backgroundColor: colors.accent, padding: 20, borderRadius: 12, alignItems: "center" },
-  uploadBtnDisabled: { opacity: 0.6 },
-  uploadBtnText: { color: "#fff", fontSize: 16, fontWeight: "600" },
-  preview: { width: "100%", height: 220, borderRadius: 12, backgroundColor: colors.surfaceMuted, marginBottom: 16 },
-  submitBtn: { backgroundColor: colors.primary, padding: 16, borderRadius: 12, alignItems: "center", marginBottom: 8 },
-  submitBtnDisabled: { opacity: 0.7 },
-  submitBtnText: { color: "#fff", fontSize: 16, fontWeight: "600" },
-  statusText: { color: colors.textMuted, fontSize: 14, marginTop: 8 },
-  reviewCard: { backgroundColor: colors.surface, borderRadius: 12, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: colors.border },
-  reviewTitle: { fontSize: 18, fontWeight: "600", color: colors.primary, marginBottom: 12 },
-  confidenceText: { fontSize: 14, color: colors.textMuted, marginBottom: 8 },
-  sectionLabel: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: colors.primary,
-    marginTop: 12,
-    marginBottom: 6,
-    letterSpacing: 0.3,
-  },
-  reviewMuted: { fontSize: 14, color: colors.textMuted, marginBottom: 6 },
-  reviewLabel: { fontWeight: "600", color: colors.textMuted },
-  reviewRow: { fontSize: 14, color: colors.text, marginBottom: 6 },
-  itemsBlock: { marginTop: 12, marginBottom: 8 },
-  itemRow: { flexDirection: "row", flexWrap: "wrap", marginBottom: 6, paddingVertical: 4, borderBottomWidth: 1, borderBottomColor: colors.border },
-  itemDesignation: { flex: 1, fontSize: 14, color: colors.text, minWidth: "100%" },
-  itemQty: { fontSize: 12, color: colors.textMuted, marginRight: 8 },
-  itemPrice: { fontSize: 12, color: colors.textMuted, marginRight: 8 },
-  itemTotal: { fontSize: 12, fontWeight: "600", color: colors.text },
-  totalRow: { fontSize: 16, fontWeight: "600", color: colors.text, marginTop: 8 },
-  warningText: {
-    fontSize: 13,
-    color: colors.warning,
-    marginBottom: 10,
-    lineHeight: 18,
-  },
-  pdfBtn: { backgroundColor: colors.primary, padding: 16, borderRadius: 12, alignItems: "center", marginBottom: 12 },
-  pdfBtnText: { color: "#fff", fontSize: 16, fontWeight: "600" },
-  resetBtn: { alignItems: "center" },
-  resetBtnText: { color: colors.primary, fontSize: 14 },
-  actionRow: { flexDirection: "row", gap: 10, marginTop: 14, flexWrap: "wrap" },
-  secondaryBtn: {
+  segSide: {
     flex: 1,
-    minWidth: "45%",
-    paddingVertical: 12,
-    paddingHorizontal: 10,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: colors.primary,
+    paddingVertical: space.sm + 2,
     alignItems: "center",
+    borderRadius: radius.sm,
   },
-  secondaryBtnDisabled: { opacity: 0.5 },
-  secondaryBtnText: { color: colors.primary, fontWeight: "600", fontSize: 13 },
-  debugText: { marginTop: 10, fontSize: 11, color: colors.textMuted, fontFamily: "monospace" },
+  segSideOn: { backgroundColor: colors.primary },
+  segTxt: { fontSize: font.md, fontWeight: font.semibold, color: colors.textSecondary },
+  segTxtOn: { color: "#fff", fontWeight: font.bold },
+  uploadRow: { flexDirection: "row", gap: space.sm, marginBottom: space.md },
+  uploadHalf: { flex: 1, minWidth: "45%" },
+  previewHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: space.sm,
+    marginBottom: space.sm,
+    flexWrap: "wrap",
+  },
+  previewLabel: { fontSize: font.md, fontWeight: font.bold, color: colors.primaryDark },
+  previewCard: { padding: space.sm, marginBottom: space.md, overflow: "hidden" },
+  preview: { width: "100%", height: 280, backgroundColor: colors.surfaceMuted },
+  retakeRow: { marginTop: space.sm, marginBottom: space.xs },
+  statusText: { color: colors.textMuted, fontSize: font.sm, marginTop: space.sm, textAlign: "center" },
+  reviewCard: { marginBottom: space.md },
+  reviewTitle: { fontSize: font.xl, fontWeight: font.bold, color: colors.primaryDark, marginBottom: space.md },
+  confBlock: { marginBottom: space.sm },
+  confLabel: { fontSize: font.sm, fontWeight: font.bold, color: colors.textSecondary, marginBottom: space.xs },
+  confidenceText: { fontSize: font.sm, color: colors.textMuted, marginBottom: space.xs },
+  sectionLabel: {
+    fontSize: font.sm,
+    fontWeight: font.bold,
+    color: colors.primary,
+    marginTop: space.md,
+    marginBottom: space.xs,
+  },
+  reviewMuted: { fontSize: font.sm, color: colors.textMuted, marginBottom: space.xs },
+  reviewLabel: { fontWeight: font.bold, color: colors.textMuted },
+  reviewRow: { fontSize: font.sm, color: colors.text, marginBottom: space.xs },
+  itemsBlock: { marginTop: space.sm, marginBottom: space.sm },
+  itemRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    marginBottom: space.sm,
+    paddingVertical: space.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.divider,
+  },
+  itemDesignation: { flex: 1, fontSize: font.sm, color: colors.text, minWidth: "100%" },
+  itemQty: { fontSize: font.xs, color: colors.textMuted, marginRight: space.sm },
+  itemPrice: { fontSize: font.xs, color: colors.textMuted, marginRight: space.sm },
+  itemTotal: { fontSize: font.xs, fontWeight: font.bold, color: colors.text },
+  totalRow: { fontSize: font.lg, fontWeight: font.bold, color: colors.primary, marginTop: space.sm },
+  actionRow: { flexDirection: "row", gap: space.sm, marginTop: space.lg, flexWrap: "wrap" },
+  actionHalf: { flex: 1, minWidth: "45%" },
+  debugText: { marginTop: space.md, fontSize: font.xs, color: colors.textSubtle, fontFamily: "monospace" },
   modalBackdrop: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.45)",
+    backgroundColor: colors.overlay,
     justifyContent: "center",
-    padding: 16,
+    padding: space.md,
   },
   modalCard: {
     backgroundColor: colors.surface,
-    borderRadius: 14,
-    padding: 16,
+    borderRadius: radius.lg,
+    padding: space.lg,
     borderWidth: 1,
     borderColor: colors.border,
-    maxHeight: "90%",
+    maxHeight: "92%",
   },
-  modalTitle: { fontSize: 18, fontWeight: "700", color: colors.primary, marginBottom: 12 },
-  modalLabel: { fontSize: 12, color: colors.textMuted, marginTop: 8, marginBottom: 4 },
-  modalInput: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 8,
-    padding: 10,
-    fontSize: 15,
-    color: colors.text,
-    backgroundColor: colors.background,
+  modalTitle: { fontSize: font.xl, fontWeight: font.bold, color: colors.primaryDark, marginBottom: space.md },
+  modalActions: {
+    flexDirection: "row",
+    gap: space.md,
+    marginTop: space.lg,
+    justifyContent: "space-between",
+    alignItems: "center",
+    flexWrap: "wrap",
   },
-  modalActions: { flexDirection: "row", gap: 12, marginTop: 20, justifyContent: "flex-end" },
-  modalCancel: { paddingVertical: 12, paddingHorizontal: 16 },
-  modalCancelText: { color: colors.textMuted, fontWeight: "600" },
-  modalSave: {
-    backgroundColor: colors.primary,
-    paddingVertical: 12,
-    paddingHorizontal: 18,
-    borderRadius: 10,
-  },
-  modalSaveText: { color: "#fff", fontWeight: "700" },
 });

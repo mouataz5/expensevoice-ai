@@ -15,21 +15,18 @@ import {
   setAudioModeAsync,
 } from "expo-audio";
 import { colors } from "../theme/colors";
+import { font, radius, shadow, space } from "../theme/tokens";
 
 export type VoiceRecorderProps = {
-  /** Bloque démarrage (ex. upload en cours) */
   busy?: boolean;
-  /** Libellés / accessibilité */
   labels: {
     record: string;
     stop: string;
     micDenied: string;
     recordError: string;
   };
-  /** Fichier prêt après stop (file://…) */
   onRecordingReady: (uri: string) => void;
   onError?: (message: string) => void;
-  /** Style du conteneur boutons */
   style?: ViewStyle;
 };
 
@@ -97,57 +94,100 @@ export function VoiceRecorder({
     <View style={[styles.wrap, style]}>
       {!isRecording ? (
         <TouchableOpacity
-          style={[styles.btn, styles.recordBtn, disabled && styles.btnDisabled]}
+          style={[styles.ringOuter, disabled && styles.ringDim]}
           onPress={start}
           disabled={disabled}
+          activeOpacity={0.9}
           accessibilityRole="button"
           accessibilityLabel={labels.record}
         >
-          {starting ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.btnText}>{labels.record}</Text>
-          )}
+          <View style={styles.ringInner}>
+            {starting ? (
+              <ActivityIndicator color={colors.primary} size="large" />
+            ) : (
+              <View style={styles.micCore} />
+            )}
+          </View>
+          <Text style={styles.caption}>{labels.record}</Text>
         </TouchableOpacity>
       ) : (
         <TouchableOpacity
-          style={[styles.btn, styles.stopBtn]}
+          style={[styles.ringOuter, styles.ringRecording]}
           onPress={stop}
+          activeOpacity={0.9}
           accessibilityRole="button"
           accessibilityLabel={labels.stop}
         >
-          <View style={styles.recordingDot} />
-          <Text style={styles.btnText}>{labels.stop}</Text>
+          <View style={styles.ringInnerRec}>
+            <View style={styles.stopSquare} />
+          </View>
+          <Text style={styles.captionRec}>{labels.stop}</Text>
         </TouchableOpacity>
-      )}
-      {isRecording && (
-        <Text style={styles.hint}>{labels.stop}</Text>
       )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: { alignItems: "center", gap: 8 },
-  btn: {
-    minWidth: 200,
-    paddingVertical: 18,
-    paddingHorizontal: 24,
-    borderRadius: 14,
+  wrap: { alignItems: "center", gap: space.sm },
+  ringOuter: {
+    alignItems: "center",
+    padding: space.md,
+    borderRadius: radius.xxl,
+    backgroundColor: colors.surface,
+    borderWidth: 2,
+    borderColor: colors.primaryMuted,
+    ...shadow.card,
+  },
+  ringDim: { opacity: 0.5 },
+  ringRecording: {
+    borderColor: colors.error,
+    backgroundColor: colors.errorSoft,
+  },
+  ringInner: {
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: colors.primaryMuted,
     alignItems: "center",
     justifyContent: "center",
-    flexDirection: "row",
-    gap: 10,
+    borderWidth: 3,
+    borderColor: colors.primary,
   },
-  recordBtn: { backgroundColor: colors.accent },
-  stopBtn: { backgroundColor: colors.error },
-  btnDisabled: { opacity: 0.55 },
-  btnText: { color: "#fff", fontSize: 16, fontWeight: "700" },
-  recordingDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
+  ringInnerRec: {
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: colors.error,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  micCore: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: colors.primary,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  stopSquare: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
     backgroundColor: "#fff",
   },
-  hint: { fontSize: 13, color: colors.textMuted },
+  caption: {
+    marginTop: space.sm,
+    fontSize: font.sm,
+    fontWeight: font.bold,
+    color: colors.primaryDark,
+    textAlign: "center",
+  },
+  captionRec: {
+    marginTop: space.sm,
+    fontSize: font.sm,
+    fontWeight: font.bold,
+    color: colors.error,
+    textAlign: "center",
+  },
 });

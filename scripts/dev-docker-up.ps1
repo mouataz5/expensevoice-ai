@@ -17,9 +17,15 @@ foreach ($c in $containers) {
     }
 }
 
-# Arrêter le stack expensevoice-dev s'il tourne (éviter conflits de ports)
-Write-Host "Arrêt du stack expensevoice-dev (s'il tourne)..."
+# Une seule stack à la fois : backend = 8000. Arrêt stack principale (abes_dev_*, docker-compose.yml).
+Write-Host "Arrêt du stack principal expensevoice-ai (docker-compose.yml) s'il tourne..."
+docker compose down 2>&1 | Out-Null
+$LASTEXITCODE = 0
+
+# Ancien nom de projet Compose + projet défini par name: dans docker-compose.dev.yml
+Write-Host "Arrêt des stacks docker-compose.dev.yml (expensevoice-dev / expensevoice-ai-dev)..."
 docker compose -f docker-compose.dev.yml -p expensevoice-dev down 2>&1 | Out-Null
+docker compose -f docker-compose.dev.yml down 2>&1 | Out-Null
 $LASTEXITCODE = 0
 
 # Arrêter aussi le stack infra s'il tourne (même conteneurs)
@@ -30,7 +36,7 @@ if (Test-Path $infraPath) {
     $LASTEXITCODE = 0
 }
 
-Write-Host "Lancement du stack expensevoice-ai (docker-compose.dev.yml)..."
+Write-Host "Lancement du stack expensevoice-ai-dev (docker-compose.dev.yml)..."
 docker compose -f docker-compose.dev.yml up -d --build
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 Write-Host "OK. Frontend: http://localhost:3000  |  Backend: http://localhost:8000"

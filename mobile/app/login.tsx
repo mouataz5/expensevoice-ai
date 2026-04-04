@@ -1,14 +1,5 @@
-import { useState } from "react";
-import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
-  KeyboardAvoidingView,
-  Platform,
-  ActivityIndicator,
-} from "react-native";
+import { useState, useCallback } from "react";
+import { View, Text, StyleSheet, KeyboardAvoidingView, Platform } from "react-native";
 import { useRouter } from "expo-router";
 import Toast from "react-native-toast-message";
 import { useAuth } from "../src/context/AuthContext";
@@ -16,6 +7,15 @@ import { useLocale } from "../src/context/LocaleContext";
 import { login } from "../src/api/auth";
 import { setPendingToken } from "../src/api/client";
 import { colors } from "../src/theme/colors";
+import { font, radius, space } from "../src/theme/tokens";
+import {
+  Card,
+  PrimaryButton,
+  GhostButton,
+  FormField,
+  TextFieldInput,
+  InfoBanner,
+} from "../src/components/ui";
 
 export default function LoginScreen() {
   const { t } = useLocale();
@@ -24,12 +24,18 @@ export default function LoginScreen() {
   const [email, setEmail] = useState("admin@company.com");
   const [password, setPassword] = useState("Admin12345!");
   const [loading, setLoading] = useState(false);
+  const [bannerError, setBannerError] = useState<string | null>(null);
+
+  const clearBanner = useCallback(() => setBannerError(null), []);
 
   const handleLogin = async () => {
     if (!email.trim() || !password) {
-      Toast.show({ type: "error", text1: t("error"), text2: "Email and password required" });
+      const msg = t("emailPasswordRequired");
+      setBannerError(msg);
+      Toast.show({ type: "error", text1: t("error"), text2: msg });
       return;
     }
+    setBannerError(null);
     setLoading(true);
     try {
       const { access_token } = await login({ email: email.trim(), password });
@@ -40,14 +46,27 @@ export default function LoginScreen() {
       setToken(access_token);
       setUser(user);
       Toast.show({ type: "success", text1: t("login") });
-      const isAdminOrDirector = user?.role === "admin" || user?.role === "director";
-      router.replace(isAdminOrDirector ? "/(tabs-director)" : "/(tabs)");
+      router.replace("/");
     } catch (err: unknown) {
       setPendingToken(null);
-      const msg = err && typeof err === "object" && "response" in err
-        ? (err as { response?: { data?: { detail?: string } } }).response?.data?.detail
-        : "Invalid credentials";
-      Toast.show({ type: "error", text1: t("error"), text2: String(msg) });
+      const ax = err && typeof err === "object" && "response" in err
+        ? (err as { response?: { status?: number; data?: { detail?: string } }; code?: string })
+        : null;
+      const status = ax?.response?.status;
+      const detail = ax?.response?.data?.detail;
+      let text2: string;
+      if (!ax?.response) {
+        text2 = t("loginNetworkError");
+      } else if (status === 401 || String(detail).toLowerCase().includes("invalid credentials")) {
+        text2 = t("loginInvalidCredentials");
+        if (__DEV__) {
+          text2 = `${text2} — ${t("loginDevPasswordHint")}`;
+        }
+      } else {
+        text2 = detail != null ? String(detail) : t("loginInvalidCredentials");
+      }
+      setBannerError(text2);
+      Toast.show({ type: "error", text1: t("error"), text2 });
     } finally {
       setLoading(false);
     }
@@ -56,92 +75,127 @@ export default function LoginScreen() {
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === "ios" ? "padding" : undefined}
-      style={styles.container}
+      style={styles.root}
     >
-      <View style={styles.card}>
-        <Text style={styles.title}>{t("appName")}</Text>
-        <Text style={styles.subtitle}>{t("login")}</Text>
-        <TextInput
-          style={styles.input}
-          placeholder={t("email")}
-          placeholderTextColor={colors.textMuted}
-          value={email}
-          onChangeText={setEmail}
-          autoCapitalize="none"
-          keyboardType="email-address"
-          editable={!loading}
-        />
-        <TextInput
-          style={styles.input}
-          placeholder={t("password")}
-          placeholderTextColor={colors.textMuted}
-          value={password}
-          onChangeText={setPassword}
-          secureTextEntry
-          editable={!loading}
-        />
-        <TouchableOpacity
-          style={[styles.button, loading && styles.buttonDisabled]}
-          onPress={handleLogin}
-          disabled={loading}
-          accessibilityRole="button"
-          accessibilityLabel={t("login")}
-        >
-          {loading ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.buttonText} pointerEvents="none">{t("login")}</Text>
-          )}
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.link}
-          onPress={() => router.push("/register")}
-          disabled={loading}
-        >
-          <Text style={styles.linkText}>{t("register")}</Text>
-        </TouchableOpacity>
+      <View style={styles.decor}>
+        <View style={styles.decorCircle} />
+        <View style={styles.decorCircle2} />
+      </View>
+      <View style={styles.inner}>
+        <View style={styles.brandBlock}>
+          <View style={styles.logoMark}>
+            <Text style={styles.logoLetter}>A</Text>
+          </View>
+          <Text style={styles.brandName}>{t("appName")}</Text>
+          <Text style={styles.brandTag}>{t("homeTagline")}</Text>
+        </View>
+
+        <Card style={styles.card}>
+          <Text style={styles.screenTitle}>{t("login")}</Text>
+          <Text style={styles.screenSub}>{t("loginSubtitle")}</Text>
+
+          {bannerError ? (
+            <InfoBanner variant="error" title={t("error")}>
+              {bannerError}
+            </InfoBanner>
+          ) : null}
+
+          <FormField label={t("email")}>
+            <TextFieldInput
+              value={email}
+              onChangeText={(v) => {
+                clearBanner();
+                setEmail(v);
+              }}
+              autoCapitalize="none"
+              keyboardType="email-address"
+              editable={!loading}
+            />
+          </FormField>
+          <FormField label={t("password")}>
+            <TextFieldInput
+              value={password}
+              onChangeText={(v) => {
+                clearBanner();
+                setPassword(v);
+              }}
+              secureTextEntry
+              editable={!loading}
+            />
+          </FormField>
+
+          <PrimaryButton title={t("login")} onPress={() => void handleLogin()} loading={loading} icon="log-in-outline" />
+
+          <GhostButton title={t("register")} onPress={() => router.push("/register")} disabled={loading} />
+        </Card>
       </View>
     </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  root: {
     flex: 1,
-    justifyContent: "center",
-    padding: 24,
     backgroundColor: colors.background,
   },
-  card: {
-    backgroundColor: colors.surface,
-    borderRadius: 20,
-    padding: 24,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    elevation: 3,
+  decor: { ...StyleSheet.absoluteFillObject, overflow: "hidden" },
+  decorCircle: {
+    position: "absolute",
+    width: 280,
+    height: 280,
+    borderRadius: 140,
+    backgroundColor: colors.primaryMuted,
+    opacity: 0.45,
+    top: -80,
+    right: -100,
   },
-  title: { fontSize: 22, fontWeight: "700", color: colors.primary, textAlign: "center", marginBottom: 4 },
-  subtitle: { fontSize: 16, color: colors.textMuted, textAlign: "center", marginBottom: 24 },
-  input: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 12,
-    fontSize: 16,
-    color: colors.text,
+  decorCircle2: {
+    position: "absolute",
+    width: 200,
+    height: 200,
+    borderRadius: 100,
+    backgroundColor: colors.accentSoft,
+    opacity: 0.35,
+    bottom: 40,
+    left: -60,
   },
-  button: {
+  inner: {
+    flex: 1,
+    justifyContent: "center",
+    paddingHorizontal: space.lg,
+    paddingVertical: space.xl,
+  },
+  brandBlock: { alignItems: "center", marginBottom: space.xl },
+  logoMark: {
+    width: 56,
+    height: 56,
+    borderRadius: 16,
     backgroundColor: colors.primary,
-    borderRadius: 12,
-    padding: 16,
     alignItems: "center",
-    marginTop: 8,
+    justifyContent: "center",
+    marginBottom: space.md,
   },
-  buttonDisabled: { opacity: 0.7 },
-  buttonText: { color: "#fff", fontSize: 16, fontWeight: "600" },
-  link: { marginTop: 16, alignItems: "center" },
-  linkText: { color: colors.primary, fontSize: 14 },
+  logoLetter: { color: "#fff", fontSize: font.xxl, fontWeight: font.bold },
+  brandName: {
+    fontSize: font.display,
+    fontWeight: font.bold,
+    color: colors.primaryDark,
+    letterSpacing: -0.5,
+  },
+  brandTag: {
+    fontSize: font.sm,
+    color: colors.textMuted,
+    marginTop: space.xs,
+    textAlign: "center",
+    maxWidth: 280,
+    lineHeight: 20,
+  },
+  card: { padding: space.xl },
+  screenTitle: {
+    fontSize: font.xxl,
+    fontWeight: font.bold,
+    color: colors.text,
+    marginBottom: space.xxs,
+  },
+  screenSub: { fontSize: font.sm, color: colors.textMuted, marginBottom: space.lg },
 });

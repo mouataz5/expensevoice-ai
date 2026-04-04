@@ -1,15 +1,8 @@
-import { useCallback, useMemo, useState } from "react";
-import {
-  View,
-  Text,
-  ScrollView,
-  StyleSheet,
-  TouchableOpacity,
-  TextInput,
-  ActivityIndicator,
-} from "react-native";
+import { useCallback, useMemo, useState, Fragment } from "react";
+import { View, Text, StyleSheet, TextInput } from "react-native";
 import { useLocale } from "../../src/context/LocaleContext";
 import { colors } from "../../src/theme/colors";
+import { font, radius, space } from "../../src/theme/tokens";
 import { VoiceRecorder } from "../../src/components/VoiceRecorder";
 import {
   transcribeSpeech,
@@ -18,6 +11,17 @@ import {
   type ParseInvoiceVoiceResult,
 } from "../../src/api/speechApi";
 import Toast from "react-native-toast-message";
+import {
+  ScreenScroll,
+  SectionTitle,
+  SegmentedPair,
+  LangChips,
+  Card,
+  PrimaryButton,
+  SecondaryButton,
+  InfoBanner,
+} from "../../src/components/ui";
+import { SuccessCelebration } from "../../src/components/ui/SuccessCelebration";
 
 type Tx = "buy" | "sell";
 type LangOpt = "auto" | "ar" | "fr" | "en";
@@ -31,16 +35,21 @@ export default function VoiceStudioScreen() {
   const [transcript, setTranscript] = useState<TranscribeApiResult | null>(null);
   const [editedText, setEditedText] = useState("");
   const [invoiceResult, setInvoiceResult] = useState<ParseInvoiceVoiceResult | null>(null);
+  const [showTranscribeSuccess, setShowTranscribeSuccess] = useState(false);
+  const [showInvoiceSuccess, setShowInvoiceSuccess] = useState(false);
 
   const langParam = useMemo(() => (lang === "auto" ? undefined : lang), [lang]);
 
-  const onRecordingReady = useCallback((uri: string) => {
-    setAudioUri(uri);
-    setTranscript(null);
-    setInvoiceResult(null);
-    setEditedText("");
-    Toast.show({ type: "success", text1: t("voiceClipReady") });
-  }, [t]);
+  const onRecordingReady = useCallback(
+    (uri: string) => {
+      setAudioUri(uri);
+      setTranscript(null);
+      setInvoiceResult(null);
+      setEditedText("");
+      Toast.show({ type: "success", text1: t("voiceClipReady") });
+    },
+    [t]
+  );
 
   const onRecorderError = useCallback(
     (msg: string) => {
@@ -56,7 +65,7 @@ export default function VoiceStudioScreen() {
       const r = await transcribeSpeech(audioUri, { language: langParam });
       setTranscript(r);
       setEditedText(r.text || "");
-      Toast.show({ type: "success", text1: t("transcribeDone") });
+      setShowTranscribeSuccess(true);
     } catch (e) {
       Toast.show({ type: "error", text1: t("error"), text2: String(e) });
     } finally {
@@ -64,11 +73,18 @@ export default function VoiceStudioScreen() {
     }
   };
 
+  const textForParse = editedText.trim();
+  const canParseInvoice = Boolean(textForParse || audioUri);
+
   const runParseInvoice = async () => {
-    if (!audioUri) return;
+    if (!canParseInvoice) return;
     setBusy(true);
     try {
-      const r = await parseInvoiceFromSpeech(audioUri, txType, { language: langParam });
+      const r = await parseInvoiceFromSpeech(txType, {
+        text: textForParse || undefined,
+        audioUri: textForParse ? undefined : audioUri ?? undefined,
+        language: langParam,
+      });
       setInvoiceResult(r);
       setTranscript({
         success: true,
@@ -77,7 +93,7 @@ export default function VoiceStudioScreen() {
         confidence: r.transcription.confidence ?? null,
       });
       setEditedText(r.transcription.text || "");
-      Toast.show({ type: "success", text1: t("voiceInvoiceDone") });
+      setShowInvoiceSuccess(true);
     } catch (e) {
       Toast.show({ type: "error", text1: t("error"), text2: String(e) });
     } finally {
@@ -86,77 +102,93 @@ export default function VoiceStudioScreen() {
   };
 
   const invData = invoiceResult?.invoice?.data as Record<string, unknown> | undefined;
+  const vp = invoiceResult?.voice_purchase;
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Text style={styles.title}>{t("voiceStudio")}</Text>
-      <Text style={styles.sub}>{t("voiceStudioSub")}</Text>
+    <Fragment>
+      <SuccessCelebration
+        visible={showTranscribeSuccess}
+        title={t("successVoiceTranscribeTitle")}
+        subtitle={t("successVoiceTranscribeSubtitle")}
+        primaryLabel={t("successVoiceContinue")}
+        onPrimary={() => setShowTranscribeSuccess(false)}
+        icon="text-outline"
+      />
+      <SuccessCelebration
+        visible={showInvoiceSuccess}
+        title={t("successVoiceInvoiceTitle")}
+        subtitle={t("successVoiceInvoiceSubtitle")}
+        primaryLabel={t("successVoiceContinue")}
+        onPrimary={() => setShowInvoiceSuccess(false)}
+        icon="receipt-outline"
+      />
+    <ScreenScroll contentStyle={styles.scrollPad}>
+      <SectionTitle title={t("voiceStudio")} subtitle={t("voiceStudioSub")} />
 
       <Text style={styles.label}>{t("selectType")}</Text>
-      <View style={styles.row}>
-        <TouchableOpacity
-          style={[styles.chip, txType === "buy" && styles.chipOn]}
-          onPress={() => setTxType("buy")}
-        >
-          <Text style={[styles.chipTxt, txType === "buy" && styles.chipTxtOn]}>{t("buy")}</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.chip, txType === "sell" && styles.chipOn]}
-          onPress={() => setTxType("sell")}
-        >
-          <Text style={[styles.chipTxt, txType === "sell" && styles.chipTxtOn]}>{t("sell")}</Text>
-        </TouchableOpacity>
-      </View>
-
-      <Text style={styles.label}>{t("speechLanguage")}</Text>
-      <View style={styles.langRow}>
-        {(["auto", "ar", "fr", "en"] as const).map((k) => (
-          <TouchableOpacity
-            key={k}
-            style={[styles.langChip, lang === k && styles.langChipOn]}
-            onPress={() => setLang(k)}
-          >
-            <Text style={[styles.langChipTxt, lang === k && styles.langChipTxtOn]}>{k.toUpperCase()}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      <VoiceRecorder
-        busy={busy}
-        labels={{
-          record: t("voiceTapRecord"),
-          stop: t("stopRecord"),
-          micDenied: t("micDenied"),
-          recordError: t("voiceRecordError"),
-        }}
-        onRecordingReady={onRecordingReady}
-        onError={onRecorderError}
-        style={{ marginVertical: 16 }}
+      <SegmentedPair
+        left={{ label: t("buy"), value: "buy" }}
+        right={{ label: t("sell"), value: "sell" }}
+        value={txType}
+        onChange={(v) => setTxType(v as Tx)}
       />
 
-      {audioUri ? (
-        <Text style={styles.uriHint}>{t("voiceClipReady")}</Text>
-      ) : null}
+      <Text style={styles.label}>{t("speechLanguage")}</Text>
+      <LangChips
+        options={[
+          { key: "auto", label: "AUTO" },
+          { key: "ar", label: "AR" },
+          { key: "fr", label: "FR" },
+          { key: "en", label: "EN" },
+        ]}
+        value={lang}
+        onChange={(k) => setLang(k as LangOpt)}
+      />
+
+      <Card style={styles.recCard}>
+        <Text style={styles.recTitle}>{t("voiceTapRecord")}</Text>
+        <VoiceRecorder
+          busy={busy}
+          labels={{
+            record: t("voiceTapRecord"),
+            stop: t("stopRecord"),
+            micDenied: t("micDenied"),
+            recordError: t("voiceRecordError"),
+          }}
+          onRecordingReady={onRecordingReady}
+          onError={onRecorderError}
+          style={styles.recorderSlot}
+        />
+        {audioUri ? (
+          <Text style={styles.uriHint}>{t("voiceClipReady")}</Text>
+        ) : null}
+      </Card>
+
+      <InfoBanner variant="info" title={t("transcribeOnly")}>
+        {t("voiceModeHintTranscribe")}
+      </InfoBanner>
+      <InfoBanner variant="success" title={t("voiceInvoiceMode")}>
+        {t("voiceModeHintInvoice")}
+      </InfoBanner>
 
       <View style={styles.actions}>
-        <TouchableOpacity
-          style={[styles.actionBtn, (!audioUri || busy) && styles.actionBtnOff]}
-          onPress={runTranscribe}
+        <PrimaryButton
+          title={busy ? t("processing") : t("transcribeOnly")}
+          onPress={() => void runTranscribe()}
+          loading={busy}
           disabled={!audioUri || busy}
-        >
-          {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.actionBtnTxt}>{t("transcribeOnly")}</Text>}
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.actionBtn, styles.actionBtnSecondary, (!audioUri || busy) && styles.actionBtnOff]}
-          onPress={runParseInvoice}
-          disabled={!audioUri || busy}
-        >
-          <Text style={styles.actionBtnTxtDark}>{t("voiceInvoiceMode")}</Text>
-        </TouchableOpacity>
+          icon="text-outline"
+        />
+        <SecondaryButton
+          title={t("voiceInvoiceMode")}
+          onPress={() => void runParseInvoice()}
+          disabled={!canParseInvoice || busy}
+          icon="analytics-outline"
+        />
       </View>
 
-      {(transcript || editedText) ? (
-        <View style={styles.card}>
+      {transcript || editedText ? (
+        <Card>
           <Text style={styles.cardTitle}>{t("transcriptionLabel")}</Text>
           {transcript?.language ? (
             <Text style={styles.meta}>
@@ -169,86 +201,69 @@ export default function VoiceStudioScreen() {
             multiline
             value={editedText}
             onChangeText={setEditedText}
-            placeholderTextColor={colors.textMuted}
+            placeholderTextColor={colors.textSubtle}
           />
-        </View>
+        </Card>
+      ) : null}
+
+      {vp && (vp.items?.length ?? 0) > 0 ? (
+        <Card>
+          <Text style={styles.cardTitle}>{t("voiceLinesTitle")}</Text>
+          <Text style={styles.meta}>
+            {t("voiceLinesType")}: {vp.type} · {vp.currency}
+            {vp.total != null ? ` · ${t("totalAmount")}: ${vp.total}` : ""}
+          </Text>
+          {vp.items.map((it, i) => (
+            <View key={`vl-${i}`} style={styles.lineRow}>
+              <Text style={styles.lineStrong}>{it.name}</Text>
+              <Text style={styles.line}>
+                ×{it.quantity ?? "—"} @ {it.unit_price ?? "—"} → {it.line_total ?? "—"}
+              </Text>
+            </View>
+          ))}
+          {(vp.warnings?.length ?? 0) > 0 ? (
+            <Text style={styles.warnings}>{vp.warnings.join(" · ")}</Text>
+          ) : null}
+        </Card>
       ) : null}
 
       {invData ? (
-        <View style={styles.card}>
+        <Card>
           <Text style={styles.cardTitle}>{t("voiceInvoiceSummary")}</Text>
           <Text style={styles.line}>{t("supplier")}: {String(invData.supplier_name ?? "—")}</Text>
           <Text style={styles.line}>{t("invoiceNumber")}: {String(invData.invoice_number ?? "—")}</Text>
           <Text style={styles.line}>{t("invoiceDate")}: {String(invData.invoice_date ?? "—")}</Text>
           <Text style={styles.line}>{t("totalAmount")}: {String(invData.total_amount ?? "—")}</Text>
-        </View>
+        </Card>
       ) : null}
-    </ScrollView>
+    </ScreenScroll>
+    </Fragment>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background },
-  content: { padding: 20, paddingBottom: 48 },
-  title: { fontSize: 22, fontWeight: "700", color: colors.text, marginBottom: 6 },
-  sub: { fontSize: 14, color: colors.textMuted, marginBottom: 20 },
-  label: { fontSize: 15, fontWeight: "600", color: colors.text, marginBottom: 8 },
-  row: { flexDirection: "row", gap: 10, marginBottom: 16 },
-  chip: {
-    flex: 1,
-    padding: 14,
-    borderRadius: 12,
-    backgroundColor: colors.surfaceMuted,
-    alignItems: "center",
-  },
-  chipOn: { backgroundColor: colors.primary },
-  chipTxt: { fontSize: 15, color: colors.text, fontWeight: "600" },
-  chipTxtOn: { color: "#fff" },
-  langRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 8 },
-  langChip: {
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 20,
-    backgroundColor: colors.surfaceMuted,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  langChipOn: { borderColor: colors.primary, backgroundColor: colors.surface },
-  langChipTxt: { fontSize: 12, fontWeight: "600", color: colors.textMuted },
-  langChipTxtOn: { color: colors.primary },
-  uriHint: { fontSize: 13, color: colors.success, textAlign: "center", marginBottom: 8 },
-  actions: { gap: 10, marginBottom: 20 },
-  actionBtn: {
-    backgroundColor: colors.primary,
-    padding: 16,
-    borderRadius: 12,
-    alignItems: "center",
-    minHeight: 52,
-    justifyContent: "center",
-  },
-  actionBtnSecondary: { backgroundColor: colors.surface, borderWidth: 2, borderColor: colors.primary },
-  actionBtnOff: { opacity: 0.45 },
-  actionBtnTxt: { color: "#fff", fontSize: 16, fontWeight: "700" },
-  actionBtnTxtDark: { color: colors.primary, fontSize: 16, fontWeight: "700" },
-  card: {
-    backgroundColor: colors.surface,
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  cardTitle: { fontSize: 16, fontWeight: "700", color: colors.primary, marginBottom: 10 },
-  meta: { fontSize: 12, color: colors.textMuted, marginBottom: 8 },
+  scrollPad: { paddingBottom: space.xxxl },
+  label: { fontSize: font.sm, fontWeight: font.semibold, color: colors.textSecondary, marginBottom: space.sm, marginTop: space.md },
+  recCard: { marginTop: space.lg, marginBottom: space.md },
+  recTitle: { fontSize: font.sm, fontWeight: font.bold, color: colors.textMuted, marginBottom: space.sm, textAlign: "center" },
+  recorderSlot: { marginVertical: space.sm },
+  uriHint: { fontSize: font.sm, color: colors.success, textAlign: "center", marginTop: space.sm, fontWeight: font.semibold },
+  actions: { gap: space.sm, marginBottom: space.lg },
+  cardTitle: { fontSize: font.lg, fontWeight: font.bold, color: colors.primaryDark, marginBottom: space.sm },
+  meta: { fontSize: font.xs, color: colors.textMuted, marginBottom: space.sm },
   textArea: {
-    minHeight: 120,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 12,
-    padding: 12,
-    fontSize: 15,
+    minHeight: 140,
+    borderWidth: 1.5,
+    borderColor: colors.borderStrong,
+    borderRadius: radius.md,
+    padding: space.md,
+    fontSize: font.md,
     color: colors.text,
     textAlignVertical: "top",
+    backgroundColor: colors.surface,
   },
-  line: { fontSize: 14, color: colors.text, marginBottom: 6 },
+  line: { fontSize: font.sm, color: colors.text, marginBottom: space.xs },
+  lineRow: { marginBottom: space.sm, paddingBottom: space.sm, borderBottomWidth: 1, borderBottomColor: colors.divider },
+  lineStrong: { fontSize: font.md, fontWeight: font.bold, color: colors.text, marginBottom: 4 },
+  warnings: { fontSize: font.xs, color: colors.textMuted, marginTop: space.sm, fontStyle: "italic" },
 });

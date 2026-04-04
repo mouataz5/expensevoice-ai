@@ -1,5 +1,7 @@
-# Development docker-compose — run everything with: docker-compose up
-# Hot-reload enabled for both backend and frontend via volume mounts.
+# Development docker-compose — run everything with: docker compose up
+# Hot-reload backend (Dockerfile.dev) + dashboard Vite :5173 + Postgres :5432 (+ Redis).
+#
+# ⚠️ Ne lancez pas en même temps docker-compose.dev.yml : le backend utilise aussi le port 8000.
 
 services:
   db:

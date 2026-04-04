@@ -1,20 +1,42 @@
 import { useEffect, useState } from "react";
-import {
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  ScrollView,
-  TextInput,
-  ActivityIndicator,
-} from "react-native";
+import { View, Text, StyleSheet, TouchableOpacity, Linking } from "react-native";
 import { useRouter } from "expo-router";
+import Constants from "expo-constants";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "../../src/context/AuthContext";
 import { useLocale } from "../../src/context/LocaleContext";
+import type { Locale } from "../../src/i18n/translations";
 import { colors } from "../../src/theme/colors";
+import { font, space } from "../../src/theme/tokens";
 import { fetchSettings, updateSettings } from "../../src/api/settings";
 import Toast from "react-native-toast-message";
+import { confirmAsync } from "../../src/lib/confirm";
+import { formatApiError } from "../../src/utils/apiError";
+import {
+  ScreenScroll,
+  Card,
+  SectionTitle,
+  TextFieldInput,
+  PrimaryButton,
+  DestructiveOutlineButton,
+  LangChips,
+  ProductBrandMark,
+  InfoBanner,
+  FormField,
+  AdminSettingsFormSkeleton,
+  UserAvatar,
+} from "../../src/components/ui";
+import { AdminAccentStripe, AdminHeader } from "../../src/components/admin";
+
+const SUPPORT_EMAIL =
+  (typeof process !== "undefined" && process.env.EXPO_PUBLIC_SUPPORT_EMAIL) || "support@abesagrotech.tn";
+
+function roleLabel(t: (k: string) => string, role: string | undefined): string {
+  if (role === "admin") return t("roleAdmin");
+  if (role === "director") return t("roleDirector");
+  if (role === "employee") return t("roleEmployee");
+  return role ?? "—";
+}
 
 export default function DirectorSettingsScreen() {
   const { user, signOut } = useAuth();
@@ -37,22 +59,20 @@ export default function DirectorSettingsScreen() {
     if (!settings) return;
     setCompanyName(settings.company_name ?? "");
     setCurrency(settings.currency ?? "TND");
-    setMaxPerPurchase(
-      String(settings.default_limits?.max_per_purchase ?? 500)
-    );
-    setDailyLimit(
-      String(settings.default_limits?.daily_limit_default ?? 1500)
-    );
+    setMaxPerPurchase(String(settings.default_limits?.max_per_purchase ?? 500));
+    setDailyLimit(String(settings.default_limits?.daily_limit_default ?? 1500));
   }, [settings]);
 
   const updateM = useMutation({
-    mutationFn: (payload: Parameters<typeof updateSettings>[0]) =>
-      updateSettings(payload),
+    mutationFn: (payload: Parameters<typeof updateSettings>[0]) => updateSettings(payload),
     onSuccess: () => {
       Toast.show({ type: "success", text1: t("settingsSaved") });
       qc.invalidateQueries({ queryKey: ["settings"] });
     },
-    onError: () => Toast.show({ type: "error", text1: t("error") }),
+    onError: (e) => {
+      const { message } = formatApiError(e, t);
+      Toast.show({ type: "error", text1: t("error"), text2: message });
+    },
   });
 
   const handleSave = () => {
@@ -71,170 +91,154 @@ export default function DirectorSettingsScreen() {
     router.replace("/login");
   };
 
-  return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <View style={styles.card}>
-        <Text style={styles.title}>{t("settings")}</Text>
-        <Text style={styles.email}>{user?.email ?? ""}</Text>
-        <Text style={styles.role}>{user?.role ?? ""}</Text>
-      </View>
+  const onLogoutPress = () => {
+    void confirmAsync(t("confirmLogoutTitle"), t("confirmLogoutMessage"), {
+      confirmLabel: t("logout"),
+      cancelLabel: t("cancel"),
+      destructive: true,
+    }).then((ok) => {
+      if (ok) void handleLogout();
+    });
+  };
 
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>{t("language")}</Text>
-        <View style={styles.langRow}>
-          {(["ar", "fr", "en"] as const).map((l) => (
-            <TouchableOpacity
-              key={l}
-              style={[styles.langBtn, locale === l && styles.langBtnActive]}
-              onPress={() => setLocale(l)}
-            >
-              <Text
-                style={[
-                  styles.langBtnText,
-                  locale === l && styles.langBtnTextActive,
-                ]}
-                pointerEvents="none"
-              >
-                {l.toUpperCase()}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      </View>
+  const appVersion = Constants.expoConfig?.version ?? "1.0.0";
+
+  const openSupport = () => {
+    void Linking.openURL(`mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(t("appName"))}`);
+  };
+
+  return (
+    <ScreenScroll>
+      <AdminAccentStripe />
+      <ProductBrandMark title={t("appName")} subtitle={t("settings")} />
+      <AdminHeader eyebrow={t("adminEyebrow")} subtitle={t("adminSettingsWorkspaceSubtitle")} />
+
+      <Card style={styles.profileCard}>
+        <UserAvatar
+          email={user?.email}
+          size="xl"
+          role={user?.role}
+          showRoleBadge
+          accessibilityLabel={user?.email ?? undefined}
+        />
+        <Text style={styles.name}>{user?.email ?? "—"}</Text>
+        <Text style={styles.roleCaption}>{roleLabel(t, user?.role)}</Text>
+      </Card>
+
+      <SectionTitle title={t("profileSupportTitle")} subtitle={t("profileSupportBody")} />
+      <Card>
+        <TouchableOpacity style={styles.supportRow} onPress={openSupport} accessibilityRole="button">
+          <Text style={styles.supportLabel}>{t("profileContactSupport")}</Text>
+          <Text style={styles.supportEmail}>{SUPPORT_EMAIL}</Text>
+        </TouchableOpacity>
+      </Card>
+
+      <SectionTitle title={t("profileAppVersion")} />
+      <Card>
+        <Text style={styles.versionText}>
+          {t("appName")} · v{appVersion}
+        </Text>
+      </Card>
+
+      <SectionTitle title={t("profileSecurityTitle")} subtitle={t("profileSecurityBody")} />
+      <Card style={styles.securityCard}>
+        <Text style={styles.securityText}>{t("profileSecurityHint")}</Text>
+      </Card>
+
+      <SectionTitle title={t("profileSession")} subtitle={t("profileLanguageHint")} />
+      <Card>
+        <LangChips
+          options={[
+            { key: "ar", label: "العربية" },
+            { key: "fr", label: "Français" },
+            { key: "en", label: "English" },
+          ]}
+          value={locale}
+          onChange={(k) => setLocale(k as Locale)}
+        />
+      </Card>
 
       {isLoading ? (
-        <View style={styles.card}>
-          <ActivityIndicator size="small" color={colors.primary} />
-        </View>
+        <>
+          <SectionTitle title={t("settings")} subtitle={t("adminLoadingWorkspace")} />
+          <AdminSettingsFormSkeleton />
+        </>
       ) : (
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>{t("settingsCompanyName")}</Text>
-          <TextInput
-            style={styles.input}
-            value={companyName}
-            onChangeText={setCompanyName}
-            placeholder={t("settingsCompanyName")}
-            placeholderTextColor={colors.textMuted}
-            editable={isAdmin}
-          />
-          <Text style={styles.label}>{t("settingsCurrency")}</Text>
-          <TextInput
-            style={styles.input}
-            value={currency}
-            onChangeText={setCurrency}
-            placeholder="TND"
-            placeholderTextColor={colors.textMuted}
-            editable={isAdmin}
-          />
-          <Text style={styles.label}>Max / purchase</Text>
-          <TextInput
-            style={styles.input}
-            value={maxPerPurchase}
-            onChangeText={setMaxPerPurchase}
-            placeholder="500"
-            placeholderTextColor={colors.textMuted}
-            keyboardType="numeric"
-            editable={isAdmin}
-          />
-          <Text style={styles.label}>Daily limit (default)</Text>
-          <TextInput
-            style={styles.input}
-            value={dailyLimit}
-            onChangeText={setDailyLimit}
-            placeholder="1500"
-            placeholderTextColor={colors.textMuted}
-            keyboardType="numeric"
-            editable={isAdmin}
-          />
-          {isAdmin && (
-            <TouchableOpacity
-              style={styles.saveBtn}
+        <Card>
+          {!isAdmin ? (
+            <InfoBanner variant="info" title={t("settings")}>
+              {t("directorSettingsReadOnly")}
+            </InfoBanner>
+          ) : null}
+          <FormField label={t("settingsCompanyName")}>
+            <TextFieldInput
+              value={companyName}
+              onChangeText={setCompanyName}
+              placeholder={t("settingsCompanyName")}
+              editable={isAdmin}
+            />
+          </FormField>
+          <FormField label={t("settingsCurrency")}>
+            <TextFieldInput value={currency} onChangeText={setCurrency} placeholder="TND" editable={isAdmin} />
+          </FormField>
+          <FormField label={t("limitsMaxPerPurchase")}>
+            <TextFieldInput
+              value={maxPerPurchase}
+              onChangeText={setMaxPerPurchase}
+              placeholder="500"
+              keyboardType="numeric"
+              editable={isAdmin}
+            />
+          </FormField>
+          <FormField label={t("limitsDailyDefault")}>
+            <TextFieldInput
+              value={dailyLimit}
+              onChangeText={setDailyLimit}
+              placeholder="1500"
+              keyboardType="numeric"
+              editable={isAdmin}
+            />
+          </FormField>
+          {isAdmin ? (
+            <PrimaryButton
+              title={t("settingsSave")}
               onPress={handleSave}
+              loading={updateM.isPending}
               disabled={updateM.isPending}
-            >
-              <Text style={styles.saveBtnText} pointerEvents="none">
-                {updateM.isPending ? "…" : t("settingsSave")}
-              </Text>
-            </TouchableOpacity>
-          )}
-        </View>
+              icon="save-outline"
+            />
+          ) : null}
+        </Card>
       )}
 
-      <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
-        <Text style={styles.logoutBtnText} pointerEvents="none">
-          {t("logout")}
-        </Text>
-      </TouchableOpacity>
-    </ScrollView>
+      <View style={styles.logoutWrap}>
+        <DestructiveOutlineButton title={t("logout")} onPress={onLogoutPress} icon="log-out-outline" />
+      </View>
+    </ScreenScroll>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background },
-  content: { padding: 20, paddingBottom: 40 },
-  card: {
-    backgroundColor: colors.surface,
-    borderRadius: 20,
-    padding: 24,
-    marginBottom: 16,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  title: {
-    fontSize: 20,
-    fontWeight: "700",
-    color: colors.primary,
-    marginBottom: 8,
-  },
-  email: { fontSize: 16, color: colors.text, marginBottom: 4 },
-  role: { fontSize: 14, color: colors.textMuted },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: "600",
+  profileCard: { alignItems: "center", paddingVertical: space.xl },
+  name: {
+    fontSize: font.lg,
+    fontWeight: font.bold,
     color: colors.text,
-    marginBottom: 12,
+    textAlign: "center",
+    marginTop: space.md,
   },
-  label: {
-    fontSize: 14,
+  roleCaption: {
+    marginTop: space.xs,
+    fontSize: font.sm,
+    fontWeight: font.semibold,
     color: colors.textMuted,
-    marginTop: 12,
-    marginBottom: 6,
+    textAlign: "center",
   },
-  input: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    fontSize: 16,
-  },
-  langRow: { flexDirection: "row", gap: 12 },
-  langBtn: {
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 12,
-    backgroundColor: colors.surfaceMuted,
-  },
-  langBtnActive: { backgroundColor: colors.primary },
-  langBtnText: { fontSize: 14, color: colors.text },
-  langBtnTextActive: { color: "#fff", fontWeight: "600" },
-  saveBtn: {
-    marginTop: 20,
-    padding: 14,
-    borderRadius: 12,
-    backgroundColor: colors.primary,
-    alignItems: "center",
-  },
-  saveBtnText: { color: "#fff", fontSize: 16, fontWeight: "600" },
-  logoutBtn: {
-    marginTop: 24,
-    padding: 16,
-    borderRadius: 12,
-    backgroundColor: colors.error,
-    alignItems: "center",
-  },
-  logoutBtnText: { color: "#fff", fontSize: 16, fontWeight: "600" },
+  supportRow: { paddingVertical: space.xs },
+  supportLabel: { fontSize: font.sm, fontWeight: font.bold, color: colors.text, marginBottom: space.xs },
+  supportEmail: { fontSize: font.md, color: colors.primary, fontWeight: font.semibold },
+  versionText: { fontSize: font.md, color: colors.textSecondary, fontWeight: font.medium },
+  securityCard: { backgroundColor: colors.surfaceMuted, borderStyle: "dashed" },
+  securityText: { fontSize: font.sm, color: colors.textSecondary, lineHeight: 22 },
+  logoutWrap: { marginTop: space.xl },
 });

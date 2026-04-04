@@ -1,9 +1,16 @@
-# Dev local — build et run via Docker (stack expensevoice-ai, modèles déjà installés)
-# Usage: .\scripts\dev-docker-up.ps1   OU   docker compose -f docker-compose.dev.yml up -d --build
-# Frontend: http://localhost:3000  |  Backend API: http://localhost:8000
-# Arrêt: docker compose -f docker-compose.dev.yml -p expensevoice-ai down
+# Dev local — build « image figée » (Dockerfile prod) + frontend :3000, DB sur 5434.
+#
+# ⚠️ NE PAS lancer en parallèle avec docker-compose.yml (racine) :
+#    les deux veulent le port 8000 pour le backend → un seul peut démarrer.
+#    Préférez UNE stack :
+#      • Hot-reload quotidien → docker compose up   (abes_dev_*, DB 5432, Vite 5173)
+#      • OU ce fichier seul → docker compose -f docker-compose.dev.yml up -d --build
+#
+# Usage: docker compose -f docker-compose.dev.yml up -d --build
+# Frontend: http://localhost:3000  |  API: http://localhost:8000  |  DB hôte: localhost:5434
+# Arrêt: docker compose -f docker-compose.dev.yml down
 
-name: expensevoice-ai
+name: expensevoice-ai-dev
 
 services:
   db:
