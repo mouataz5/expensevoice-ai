@@ -6,6 +6,7 @@ from __future__ import annotations
 import logging
 import os
 import tempfile
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
@@ -90,8 +91,8 @@ class ParseInvoiceVoiceResponse(BaseModel):
 @limiter.limit("20/minute")
 async def transcribe_speech(
     request: Request,
-    audio: UploadFile = File(...),
-    language: str | None = Form(default=None),
+    audio: Annotated[UploadFile, File(...)],
+    language: Annotated[str | None, Form()] = None,
     user: User = Depends(get_current_user),
 ):
     """
@@ -145,11 +146,11 @@ async def transcribe_speech(
 @limiter.limit("10/minute")
 async def parse_invoice_from_voice(
     request: Request,
-    audio: UploadFile | None = File(None),
-    text: str | None = Form(default=None),
-    transaction_type: str = Form(default="buy"),
-    language: str | None = Form(default=None),
-    debug: str = Form(default="false"),
+    audio: Annotated[UploadFile | None, File()] = None,
+    text: Annotated[str | None, Form()] = None,
+    transaction_type: Annotated[str, Form()] = "buy",
+    language: Annotated[str | None, Form()] = None,
+    debug: Annotated[str, Form()] = "false",
     user: User = Depends(get_current_user),
 ):
     """

@@ -34,13 +34,21 @@ ROLE_ORDER_FOR_NUMERIC_FALLBACK = (
     "line_ttc",
 )
 
+# line_ttc : éviter le motif « |ttc » seul (colonne « Total TTC » document confondu avec en-tête ligne)
 _HEADER_PATTERNS: list[tuple[ColumnRole, re.Pattern[str]]] = [
     ("designation", re.compile(r"désign|designat|article|libell|libel|ref\.?\s*art|réf\.?\s*art|code\s*art|\bdes\.", re.I)),
-    ("unit", re.compile(r"^\s*unit|condit|u\.|unite|unité", re.I)),
+    ("unit", re.compile(r"^\s*unit|condit|u\.|unite|unité|\bUN\b", re.I)),
     ("quantity", re.compile(r"qte|qté|quant|nombre|\bqty\b", re.I)),
     ("unit_price", re.compile(r"p\.?\s*u\b|^pu$|prix\s*unit|prix\s*u\.|unit\s*price", re.I)),
-    ("line_ht", re.compile(r"p\.?\s*h\.?\s*t\b|^pht$|montant\s*ht|total\s*ht|montant\s*h\.?\s*t", re.I)),
-    ("line_ttc", re.compile(r"p\.?\s*t\.?\s*t\.?\s*c\b|^pttc$|montant\s*ttc|prix\s*ttc|ttc", re.I)),
+    ("line_ht", re.compile(r"p\.?\s*h\.?\s*t\b|^pht$|montant\s*ht|montant\s*h\.?\s*t(?!\s*va)", re.I)),
+    (
+        "line_ttc",
+        re.compile(
+            r"p\.[^\w]*t\.[^\w]*t\.[^\w]*c|p\.?\s*t\.?\s*t\.?\s*c\b|^pttc$|"
+            r"montant\s*ttc|prix\s*ttc|p\.?\s*t\s*c\b(?!\s*document)",
+            re.I,
+        ),
+    ),
 ]
 
 _SKIP_ROW_DESC = re.compile(
@@ -73,6 +81,67 @@ def _cell_x_center(cell: dict[str, Any]) -> float | None:
         return None
 
 
+_MAX_SANE_QUANTITY = 1000.0
+
+
+def _cell_y_center(cell: dict[str, Any]) -> float | None:
+    bb = cell.get("bbox")
+    if not bb or len(bb) < 4:
+        return None
+    try:
+        y0, y1 = float(bb[1]), float(bb[3])
+        return (y0 + y1) / 2.0
+    except (TypeError, ValueError):
+        return None
+
+
+def _remap_row_ids_by_vertical_clusters(cells: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    Recalcule row_id depuis les bbox (même ligne ≈ même Y médian).
+    Réduit les lignes mélangées quand Surya incrémente row_id hors ordre visuel.
+    """
+    if len(cells) < 4:
+        return cells
+    ycenters: list[float] = []
+    for c in cells:
+        yc = _cell_y_center(c)
+        if yc is not None:
+            ycenters.append(yc)
+    if len(ycenters) < 4:
+        return cells
+    unique_y = sorted({round(y, 2) for y in ycenters})
+    if len(unique_y) < 2:
+        return cells
+    gaps = [unique_y[i + 1] - unique_y[i] for i in range(len(unique_y) - 1)]
+    med_gap = float(median(gaps)) if gaps else 16.0
+    tol = max(7.0, med_gap * 0.42)
+
+    bins: list[list[float]] = []
+    for y in unique_y:
+        placed = False
+        for b in bins:
+            cy = sum(b) / len(b)
+            if abs(y - cy) <= tol:
+                b.append(y)
+                placed = True
+                break
+        if not placed:
+            bins.append([y])
+    centroids = sorted(sum(b) / len(b) for b in bins)
+
+    def _row_for_y(y: float) -> int:
+        return min(range(len(centroids)), key=lambda i: abs(centroids[i] - y))
+
+    out: list[dict[str, Any]] = []
+    for c in cells:
+        cc = dict(c)
+        yc = _cell_y_center(cc)
+        if yc is not None:
+            cc["row_id"] = _row_for_y(yc)
+        out.append(cc)
+    return out
+
+
 def _normalize_cells(table: dict[str, Any]) -> list[dict[str, Any]]:
     cells = table.get("cells") or []
     out: list[dict[str, Any]] = []
@@ -99,7 +168,7 @@ def _normalize_cells(table: dict[str, Any]) -> list[dict[str, Any]]:
                 "is_header": bool(c.get("is_header")),
             }
         )
-    return out
+    return _remap_row_ids_by_vertical_clusters(out)
 
 
 def _median_x_by_col(cells: list[dict[str, Any]]) -> dict[int, float]:
@@ -292,6 +361,66 @@ def _approx(a: float, b: float, *, tol_ratio: float = 0.02, tol_abs: float = 1.0
     return abs(a - b) <= max(tol_abs, m * tol_ratio)
 
 
+def _looks_like_price_value(x: float) -> bool:
+    """Montant unitaire / prix (souvent > 1 avec décimales ou grand millier)."""
+    if x <= 0:
+        return False
+    if x >= 150:
+        return True
+    fract = abs(x - round(x))
+    return fract >= 0.02
+
+
+def _maybe_swap_qty_unit_price(r: TableRowModel) -> tuple[TableRowModel, str | None]:
+    """
+    Qté colonne / prix colonne souvent permutés par OCR (ex. 6590 vs 1).
+    On corrige si qté >> 1000, ou si qté×PU ≠ HT mais PU×qté == HT.
+    """
+    q, pu = r.quantity, r.unit_price
+    if q is None or pu is None:
+        return r, None
+    qf, puf = float(q), float(pu)
+    ht = float(r.line_ht) if r.line_ht is not None else None
+
+    def prod_ok(a: float, b: float, h: float | None) -> bool:
+        if h is None:
+            return False
+        return _approx(a * b, h, tol_ratio=0.02, tol_abs=max(2.0, abs(h) * 0.02))
+
+    absurd_qty = qf > _MAX_SANE_QUANTITY or (
+        qf > 50
+        and puf <= _MAX_SANE_QUANTITY
+        and _looks_like_price_value(qf)
+        and not _looks_like_price_value(puf)
+    )
+    mismatch_fixed_by_swap = (
+        ht is not None
+        and not prod_ok(qf, puf, ht)
+        and prod_ok(puf, qf, ht)
+    )
+    if absurd_qty or mismatch_fixed_by_swap:
+        q_new = puf
+        pu_new = qf
+        if q_new <= 0 or pu_new <= 0:
+            return r, None
+        qty_out: float = round(q_new) if abs(q_new - round(q_new)) < 0.051 else round(q_new, 4)
+        if qty_out > _MAX_SANE_QUANTITY:
+            qty_out = round(q_new, 4)
+        return (
+            TableRowModel(
+                description=r.description,
+                unit=r.unit,
+                quantity=qty_out,
+                unit_price=round(pu_new, 6),
+                line_ht=r.line_ht,
+                line_ttc=r.line_ttc,
+                source_row_id=r.source_row_id,
+            ),
+            "swapped_qty_unit_price",
+        )
+    return r, None
+
+
 def validate_and_correct_rows(
     rows: list[TableRowModel],
 ) -> tuple[list[TableRowModel], list[str]]:
@@ -299,20 +428,23 @@ def validate_and_correct_rows(
     corrections: list[str] = []
     fixed: list[TableRowModel] = []
     for r in rows:
+        r2, swap_note = _maybe_swap_qty_unit_price(r)
+        if swap_note:
+            corrections.append(f"row_{r.source_row_id}_{swap_note}")
         nr = TableRowModel(
-            description=r.description,
-            unit=r.unit,
-            quantity=r.quantity,
-            unit_price=r.unit_price,
-            line_ht=r.line_ht,
-            line_ttc=r.line_ttc,
-            source_row_id=r.source_row_id,
+            description=r2.description,
+            unit=r2.unit,
+            quantity=r2.quantity,
+            unit_price=r2.unit_price,
+            line_ht=r2.line_ht,
+            line_ttc=r2.line_ttc,
+            source_row_id=r2.source_row_id,
         )
         q, pu, ht = nr.quantity, nr.unit_price, nr.line_ht
         if q is not None and pu is not None and ht is not None:
             exp = round(float(q) * float(pu), 4)
-            if not _approx(exp, float(ht)):
-                if _approx(exp, float(ht), tol_ratio=0.08, tol_abs=5.0):
+            if not _approx(exp, float(ht), tol_ratio=0.02, tol_abs=max(2.0, abs(float(ht)) * 0.02)):
+                if _approx(exp, float(ht), tol_ratio=0.06, tol_abs=5.0):
                     corrections.append(f"row_{nr.source_row_id}_line_ht_scaled_to_qty_pu")
                     nr.line_ht = round(exp, 3)
                 else:

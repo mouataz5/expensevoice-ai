@@ -1,7 +1,7 @@
 """Extraction structurée tables Surya (métadonnées simulées)."""
 from __future__ import annotations
 
-from app.services.extraction.surya_table_extractor import (
+from app.services.invoice_facades.surya_table_extractor import (
     detect_table_columns,
     extract_invoice_lines_from_surya_metadata,
     parse_surya_table_rows,

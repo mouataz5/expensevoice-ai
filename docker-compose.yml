@@ -1,6 +1,12 @@
 # Development docker-compose — run everything with: docker compose up
 # Hot-reload backend (Dockerfile.dev) + dashboard Vite :5173 + Postgres :5432 (+ Redis).
 #
+# Après un recreate, n’enchaînez pas tout de suite curl sur :8000 : sous Docker Desktop (Windows),
+# vous pouvez voir « curl: (52) Empty reply » pendant que l’image charge l’app (imports lourds).
+# Utilisez plutôt :
+#   docker compose up -d --force-recreate --wait backend
+# ou attendez (healthy) dans `docker compose ps`, puis curl /health.
+#
 # ⚠️ Ne lancez pas en même temps docker-compose.dev.yml : le backend utilise aussi le port 8000.
 
 services:
@@ -32,6 +38,10 @@ services:
       context: ./backend
       dockerfile: Dockerfile.dev
     container_name: abes_dev_backend
+    # Sans --reload : sous Docker Desktop (Windows), uvicorn --reload peut accepter la connexion
+    # puis fermer sans corps HTTP (« curl: (52) Empty reply from server »). Pour le reload en dev,
+    # lancer uvicorn localement ou commenter la ligne `command` ci‑dessous.
+    command: ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
     volumes:
       - ./backend:/app
       - backend_venv:/app/.venv
@@ -47,6 +57,20 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    # Évite « curl: (52) Empty reply » si l’on interroge :8000 juste après le démarrage du
+    # conteneur : Docker peut être « Up » avant qu’Uvicorn n’ait fini le chargement de l’app.
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).read()",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 6
+      start_period: 60s
 
   celery-worker:
     build:
@@ -82,7 +106,8 @@ services:
       - VITE_API_BASE_URL=
       - VITE_PROXY_TARGET=http://backend:8000
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
 
 volumes:
   dev_pg_data:

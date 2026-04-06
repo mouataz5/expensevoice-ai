@@ -18,7 +18,11 @@ from app.schemas.invoice_pipeline import (
     OCRResult,
 )
 from app.services.confidence_scoring import compute_global_confidence
-from app.services.extraction.surya_table_extractor import extract_invoice_lines_from_surya_metadata
+from app.services.invoice_facades.geometry_table_extractor import (
+    extract_invoice_lines_from_word_geometry,
+    score_line_drafts,
+)
+from app.services.invoice_facades.surya_table_extractor import extract_invoice_lines_from_surya_metadata
 from app.services.invoice_heuristics import finalize_draft_line_math, fix_zero_values, heuristic_invoice_from_ocr
 from app.services.invoice_draft_merge import merge_llm_and_heuristic_invoice
 from app.services.invoice_llm_extract import (
@@ -34,6 +38,28 @@ from app.services.ocr_text_normalization import detect_currency_hint, excerpt_fo
 from app.utils.post_processing import post_correct_invoice_draft, post_process_invoice
 
 logger = logging.getLogger(__name__)
+
+# Avertissements internes (merge / tables) — pas pour l’utilisateur final.
+_PIPELINE_NOISE_WARNINGS = (
+    "line_items_source:",
+    "surya_line_sum_vs_draft_subtotal",
+    "heuristic_zero_fix_applied",
+    "hybrid_merge_applied",
+)
+
+
+def _strip_pipeline_noise_warnings(ws: list[str] | None) -> list[str]:
+    if not ws:
+        return []
+    out: list[str] = []
+    for w in ws:
+        if not isinstance(w, str):
+            continue
+        wl = w.lower()
+        if any(p in wl for p in _PIPELINE_NOISE_WARNINGS):
+            continue
+        out.append(w)
+    return out
 
 
 def _trim_surya_table_debug(dbg: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -81,29 +107,42 @@ async def complete_invoice_extraction_from_normalized(
             draft, merge_provenance = merge_llm_and_heuristic_invoice(draft, hd, raw_ocr)
             draft, zero_journal = fix_zero_values(draft, raw_ocr, transaction_type)
 
-            _surya_lines, _surya_dbg = extract_invoice_lines_from_surya_metadata(
-                dict(ocr_for_confidence.metadata or {})
+            meta = dict(ocr_for_confidence.metadata or {})
+            _surya_lines, _surya_dbg = extract_invoice_lines_from_surya_metadata(meta)
+            _geom_lines, _geom_dbg = extract_invoice_lines_from_word_geometry(
+                ocr_for_confidence,
+                metadata=meta,
             )
-            surya_table_extraction_debug = _surya_dbg
-            if _surya_dbg.get("applied_to_draft") and _surya_lines:
-                draft.items = _surya_lines
+            surya_table_extraction_debug = {**_surya_dbg, "geometry_table": _geom_dbg}
+
+            surya_ok = bool(_surya_dbg.get("applied_to_draft") and _surya_lines)
+            geom_ok = bool(_geom_dbg.get("applied_to_draft") and _geom_lines)
+            s_score = score_line_drafts(_surya_lines) if surya_ok else -1.0
+            g_score = score_line_drafts(_geom_lines) if geom_ok else -1.0
+
+            chosen_lines = None
+            chosen_src = None
+            if g_score > s_score + 0.75:
+                chosen_lines, chosen_src = _geom_lines, "word_geometry"
+            elif surya_ok:
+                chosen_lines, chosen_src = _surya_lines, "surya_table"
+            elif geom_ok:
+                chosen_lines, chosen_src = _geom_lines, "word_geometry"
+
+            if chosen_lines:
+                draft.items = chosen_lines
                 draft = finalize_draft_line_math(draft)
-                merge_provenance["line_items_source"] = "surya_table"
-                w = list(draft.warnings or [])
-                tag = "line_items_source:surya_table"
-                if tag not in w:
-                    w.append(tag)
-                draft.warnings = w
+                merge_provenance["line_items_source"] = chosen_src or "structured_table"
                 line_sum = sum(
-                    float(ln.line_subtotal or 0) for ln in _surya_lines if ln.line_subtotal is not None
+                    float(ln.line_subtotal or 0) for ln in chosen_lines if ln.line_subtotal is not None
                 )
                 sub = draft.subtotal_amount
                 if sub is not None and line_sum > 0:
                     tol = max(5.0, 0.03 * abs(float(sub)))
                     if abs(line_sum - float(sub)) > tol:
-                        draft.warnings = list(draft.warnings or []) + [
-                            "surya_line_sum_vs_draft_subtotal_mismatch"
-                        ]
+                        merge_provenance["structured_line_sum_vs_subtotal_note"] = (
+                            f"lines_sum={line_sum:.3f} draft_subtotal={float(sub):.3f}"
+                        )
         else:
             zero_journal: dict[str, Any] = {}
 
@@ -145,7 +184,10 @@ async def complete_invoice_extraction_from_normalized(
         validation.field_confidence = fc
         validation.global_confidence = gc
 
-    warnings = sorted(set((draft.warnings or []) + (validation.warnings or [])))
+    draft.warnings = _strip_pipeline_noise_warnings(draft.warnings)
+    warnings = sorted(
+        set(_strip_pipeline_noise_warnings(draft.warnings) + (validation.warnings or []))
+    )
 
     dbg: InvoiceExtractionDebug | None = None
     if debug or os.getenv("INVOICE_DEBUG", "").lower() in ("1", "true", "yes"):

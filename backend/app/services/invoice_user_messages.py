@@ -14,6 +14,11 @@ _TECH_HINTS = (
     "provider:",
     "hybrid_merge_applied",
     "ocr_devis_hint",
+    "line_items_source:",
+    "surya_line_sum",
+    "heuristic_zero_fix",
+    "math_lines_vs_subtotal:",
+    "math_total_vs_lines:",
 )
 
 _USER_BY_CODE = {

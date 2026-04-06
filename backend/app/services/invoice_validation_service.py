@@ -32,6 +32,11 @@ def _approx(a: float | None, b: float | None, tol_ratio: float = 0.02, tol_abs: 
     return abs(a - b) <= max(tol_abs, m * tol_ratio)
 
 
+def _is_quote_like(draft: InvoiceExtractionDraft) -> bool:
+    dt = (draft.document_type or "").lower().strip()
+    return dt in ("quote", "devis", "quotation", "proforma")
+
+
 def validate_invoice_draft(
     draft: InvoiceExtractionDraft,
     ocr_context: str = "",
@@ -83,11 +88,12 @@ def validate_invoice_draft(
         if not is_valid_iso_date(piso or ""):
             warnings.append("Date d'échéance invalide ou ambiguë")
 
-    if not draft.invoice_number or not str(draft.invoice_number).strip():
+    quote_like = _is_quote_like(draft)
+    if (not draft.invoice_number or not str(draft.invoice_number).strip()) and not quote_like:
         missing.append("invoice_number")
 
     # invoice number noise (ne pas avertir sur références FA…/20xx ou BL courants)
-    if draft.invoice_number:
+    if draft.invoice_number and not quote_like:
         inv_norm = str(draft.invoice_number).strip()
         if re.match(r"(?i)^FA\d{1,8}/\d{4}$", inv_norm) or len(inv_norm) >= 6:
             pass
@@ -114,7 +120,7 @@ def validate_invoice_draft(
         lt = to_float_safe(ln.line_subtotal)
         rec: dict[str, Any] = {"index": i, "quantity": q, "unit_price": pu, "line_subtotal": lt}
         if q is not None and pu is not None and lt is not None and lt > 0:
-            if not _approx(q * pu, lt, tol_ratio=0.06, tol_abs=max(2.0, lt * 0.06)):
+            if not _approx(q * pu, lt, tol_ratio=0.02, tol_abs=max(2.0, lt * 0.02)):
                 coherent_lines = False
                 warnings.append(
                     f"Ligne {i+1}: qté×PU ({q}×{pu}) ≠ sous-total ligne ({lt}) — vérifier OCR / colonnes"
@@ -205,9 +211,13 @@ def validate_invoice_draft(
     if total is None or total <= 0:
         missing.append("total_amount")
 
+    skip_lines_subtotal_math = (not coherent_lines) and bool(draft.items)
     for mw in validate_invoice_math(draft):
-        if mw not in warnings:
-            warnings.append(mw)
+        if mw in warnings:
+            continue
+        if skip_lines_subtotal_math and "math_lines_vs_subtotal" in mw:
+            continue
+        warnings.append(mw)
         flags.append(
             ValidationFlag(
                 code="invoice_math_hint",

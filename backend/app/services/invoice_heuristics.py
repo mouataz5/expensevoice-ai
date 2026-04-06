@@ -336,7 +336,7 @@ def validate_invoice_math(draft: InvoiceExtractionDraft) -> list[str]:
         return warnings
 
     if line_sum > 1 and sub and sub > 0:
-        if abs(line_sum - sub) > max(5.0, sub * 0.04):
+        if abs(line_sum - sub) > max(3.0, sub * 0.02):
             warnings.append(
                 f"math_lines_vs_subtotal: sum(lines)={line_sum:.3f} subtotal={sub:.3f}"
             )
@@ -347,7 +347,7 @@ def validate_invoice_math(draft: InvoiceExtractionDraft) -> list[str]:
         expected = line_sum + tax + stamp
         if sub and abs(sub - line_sum) < max(3.0, line_sum * 0.03):
             expected = sub + tax + stamp
-        if abs(expected - total) > max(8.0, total * 0.05):
+        if abs(expected - total) > max(5.0, total * 0.02):
             warnings.append(
                 f"math_total_vs_lines: expected≈{expected:.3f} total={total:.3f}"
             )

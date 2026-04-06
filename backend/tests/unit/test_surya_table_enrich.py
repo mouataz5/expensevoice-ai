@@ -5,7 +5,7 @@ import os
 
 import pytest
 
-from app.services.extraction.table_parser import enrich_raw_ocr_with_surya_tables
+from app.services.invoice_facades.table_parser import enrich_raw_ocr_with_surya_tables
 
 
 @pytest.fixture(autouse=True)

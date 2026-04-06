@@ -188,7 +188,91 @@ def post_correct_invoice_draft(
     if new_items:
         d = d.model_copy(update={"items": new_items})
 
+    blob_for_type = ((ocr_context or "") + "\n" + blob).strip()
+    if re.search(r"(?i)\bDEVIS\b", blob_for_type):
+        dt = (d.document_type or "").lower().strip()
+        if dt in ("invoice", "facture", ""):
+            d = d.model_copy(update={"document_type": "devis"})
+
     return d, corrections
+
+
+def _totals_approx(a: float, b: float, *, tol_ratio: float = 0.02, tol_abs: float = 3.0) -> bool:
+    m = max(abs(a), abs(b), 1.0)
+    return abs(a - b) <= max(tol_abs, m * tol_ratio)
+
+
+def reconcile_draft_totals_coherent(
+    draft: InvoiceExtractionDraft,
+) -> tuple[InvoiceExtractionDraft, dict[str, Any]]:
+    """
+    Si HT + TVA + timbre ≠ TTC (écart > 2 %), recalcule la TVA depuis `tax_rate_percent`
+    ou aligne le TTC sur les composantes lorsque c'est plus cohérent.
+    """
+    journal: dict[str, Any] = {}
+    d = draft.model_copy(deep=True)
+    sub = to_float_safe(d.subtotal_amount)
+    tax = to_float_safe(d.tax_amount)
+    stamp = to_float_safe(d.stamp_tax) or 0.0
+    total = to_float_safe(d.total_amount)
+    rate = to_float_safe(d.tax_rate_percent)
+
+    if sub is None or total is None or sub <= 0 or total <= 0:
+        return d, journal
+
+    tax_f = float(tax or 0)
+    summed = float(sub) + tax_f + float(stamp)
+    if _totals_approx(summed, float(total), tol_ratio=0.02, tol_abs=max(3.0, abs(float(total)) * 0.02)):
+        return d, journal
+
+    if rate and rate > 0:
+        new_tax = round(float(sub) * float(rate) / 100.0, 3)
+        new_total = round(float(sub) + new_tax + float(stamp), 3)
+        if _totals_approx(new_total, float(total), tol_ratio=0.025, tol_abs=max(5.0, abs(float(total)) * 0.025)):
+            d = d.model_copy(update={"tax_amount": new_tax})
+            journal["tax_recomputed_from_rate"] = new_tax
+            if not _totals_approx(new_total, float(total), tol_abs=1.0):
+                d = d.model_copy(update={"total_amount": new_total})
+                journal["total_aligned_to_ht_tva"] = new_total
+            return d, journal
+
+    if tax is not None:
+        alt_total = round(float(sub) + tax_f + float(stamp), 3)
+        if _totals_approx(alt_total, float(total), tol_ratio=0.03, tol_abs=max(8.0, abs(float(total)) * 0.03)):
+            d = d.model_copy(update={"total_amount": alt_total})
+            journal["total_snapped_to_ht_tva_stamp"] = alt_total
+            return d, journal
+
+    return d, journal
+
+
+def reconcile_subtotal_from_line_items(
+    draft: InvoiceExtractionDraft,
+) -> tuple[InvoiceExtractionDraft, dict[str, Any]]:
+    """Aligne `subtotal_amount` sur Σ lignes HT lorsque l’écart est > 2 % ou lignes très cohérentes."""
+    journal: dict[str, Any] = {}
+    items = draft.items or []
+    line_sum = sum((to_float_safe(ln.line_subtotal) or 0.0) for ln in items)
+    if line_sum <= 1.0:
+        return draft, journal
+    sub = to_float_safe(draft.subtotal_amount)
+    if sub is None or sub <= 0:
+        return draft.model_copy(update={"subtotal_amount": round(line_sum, 3)}), {"subtotal_from_lines": line_sum}
+
+    sub_f = float(sub)
+    if abs(line_sum - sub_f) <= max(3.0, sub_f * 0.02):
+        return draft.model_copy(update={"subtotal_amount": round(line_sum, 3)}), {"subtotal_snapped_to_lines": line_sum}
+
+    n_ok = 0
+    for ln in items:
+        q, pu, st = to_float_safe(ln.quantity), to_float_safe(ln.unit_price), to_float_safe(ln.line_subtotal)
+        if q and pu and st and abs(float(q) * float(pu) - float(st)) <= max(2.0, 0.03 * float(st)):
+            n_ok += 1
+    if n_ok >= 2 and abs(line_sum - sub_f) > max(8.0, sub_f * 0.04):
+        return draft.model_copy(
+            update={"subtotal_amount": round(line_sum, 3)}
+        ), {"subtotal_from_coherent_lines": line_sum}
+    return draft, journal
 
 
 def post_process_invoice(
@@ -202,7 +286,12 @@ def post_process_invoice(
     from app.services.invoice_heuristics import finalize_draft_line_math
     from app.services.ocr_text_normalization import detect_currency_hint
 
-    journal: dict[str, Any] = {"removed_empty_lines": 0, "currency_hint": None}
+    journal: dict[str, Any] = {
+        "removed_empty_lines": 0,
+        "currency_hint": None,
+        "totals_reconcile": {},
+        "subtotal_from_lines": {},
+    }
     d = finalize_draft_line_math(draft.model_copy(deep=True))
 
     cleaned: list[InvoiceLineDraft] = []
@@ -226,5 +315,13 @@ def post_process_invoice(
         if hint:
             d = d.model_copy(update={"currency": hint})
             journal["currency_hint"] = hint
+
+    d, sub_j = reconcile_subtotal_from_line_items(d)
+    if sub_j:
+        journal["subtotal_from_lines"] = sub_j
+
+    d, tr_journal = reconcile_draft_totals_coherent(d)
+    if tr_journal:
+        journal["totals_reconcile"] = tr_journal
 
     return d, journal

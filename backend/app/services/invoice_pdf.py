@@ -5,6 +5,7 @@ Green/white Agriculture SaaS theme. Arabic labels fallback to French gracefully.
 """
 import logging
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -133,6 +134,19 @@ def _fmt_num(v: Any) -> str:
         return f"{f:,.3f}" if f != int(f) else f"{int(f):,}"
     except (TypeError, ValueError):
         return _safe(v)
+
+
+def _parse_line_ttc_from_details(details: str | None) -> float | None:
+    if not details:
+        return None
+    m = re.search(r"(?i)ttc:\s*([\d\s.,]+)", details)
+    if not m:
+        return None
+    raw = m.group(1).replace(" ", "").replace(",", ".")
+    try:
+        return float(raw)
+    except ValueError:
+        return None
 
 
 def _fmt_date(d: str | None) -> str:
@@ -352,17 +366,36 @@ def generate_invoice_report_pdf(
     # ══════════════════════════════════════════════════════
     doc_type = _safe(extracted.get("document_type")) or "invoice"
     rep_title = _report_title(doc_type)
-    header_data = [
-        [Paragraph("Abes AgroTech", styles["header_title"])],
-        [Paragraph(rep_title + " / تقرير المستند", styles["header_sub"])],
-    ]
-    header_table = Table(header_data, colWidths=[content_w])
+    logo_cell = Table(
+        [[Paragraph('<font color="white" size="11"><b>A</b></font>', styles["header_title"])]],
+        colWidths=[10 * mm],
+        rowHeights=[10 * mm],
+    )
+    logo_cell.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), C_GREEN_MID),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("BOX", (0, 0), (-1, -1), 0.5, C_WHITE),
+    ]))
+    title_stack = Table(
+        [
+            [Paragraph("Abes AgroTech", styles["header_title"])],
+            [Paragraph(rep_title + " / تقرير المستند", styles["header_sub"])],
+        ],
+        colWidths=[content_w - 12 * mm],
+    )
+    title_stack.setStyle(TableStyle([
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+    ]))
+    header_data = [[logo_cell, title_stack]]
+    header_table = Table(header_data, colWidths=[12 * mm, content_w - 12 * mm])
     header_table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, -1), C_GREEN_DARK),
-        ("TOPPADDING", (0, 0), (-1, 0), 8),
-        ("BOTTOMPADDING", (0, -1), (-1, -1), 8),
-        ("TOPPADDING", (0, 1), (-1, 1), 2),
-        ("BOTTOMPADDING", (0, 0), (-1, 0), 2),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 8),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
         ("LEFTPADDING", (0, 0), (-1, -1), 6),
         ("RIGHTPADDING", (0, 0), (-1, -1), 6),
         ("ROUNDEDCORNERS", [4, 4, 0, 0]),
@@ -530,22 +563,42 @@ def generate_invoice_report_pdf(
     story.append(_section_bar("Détail des articles / تفاصيل المواد", styles))
     story.append(Spacer(1, 1 * mm))
 
-    # Column widths: Désignation | Qté | Unité | Prix Unitaire | Montant
-    cw = [content_w * 0.38, content_w * 0.10, content_w * 0.13, content_w * 0.18, content_w * 0.21]
-
     def _ph(txt: str, st: str) -> Paragraph:
         return Paragraph(txt, styles[st])
 
-    items_header = [
-        _ph("Désignation", "col_head"),
-        _ph("Qté", "col_head"),
-        _ph("Unité", "col_head"),
-        _ph("Prix Unit.", "col_head"),
-        _ph("Montant TND", "col_head"),
-    ]
+    items = extracted.get("items") or []
+    has_line_ttc = any(
+        _parse_line_ttc_from_details(str(row.get("details") or "")) is not None for row in items
+    )
+
+    if has_line_ttc:
+        cw = [
+            content_w * 0.32,
+            content_w * 0.08,
+            content_w * 0.10,
+            content_w * 0.15,
+            content_w * 0.14,
+            content_w * 0.21,
+        ]
+        items_header = [
+            _ph("Désignation", "col_head"),
+            _ph("Qté", "col_head"),
+            _ph("Unité", "col_head"),
+            _ph("P.U.", "col_head"),
+            _ph("Montant HT", "col_head"),
+            _ph("Montant TTC", "col_head"),
+        ]
+    else:
+        cw = [content_w * 0.38, content_w * 0.10, content_w * 0.13, content_w * 0.18, content_w * 0.21]
+        items_header = [
+            _ph("Désignation", "col_head"),
+            _ph("Qté", "col_head"),
+            _ph("Unité", "col_head"),
+            _ph("Prix Unit.", "col_head"),
+            _ph("Montant HT", "col_head"),
+        ]
     items_rows = [items_header]
 
-    items = extracted.get("items") or []
     for idx, row in enumerate(items[:30]):
         desig = _safe(row.get("designation")) or "—"
         qty = row.get("quantity")
@@ -557,19 +610,31 @@ def generate_invoice_report_pdf(
                 amt = float(qty) * float(up)
             except (TypeError, ValueError):
                 amt = None
-        items_rows.append([
-            _ph(desig[:55], "cell"),
-            _ph(_fmt_num(qty), "cell_r"),
-            _ph(unit[:12], "cell"),
-            _ph(_fmt_num(up), "cell_r"),
-            _ph(_fmt_num(amt), "cell_r"),
-        ])
+        l_ttc = _parse_line_ttc_from_details(str(row.get("details") or ""))
+        if has_line_ttc:
+            items_rows.append([
+                _ph(desig[:55], "cell"),
+                _ph(_fmt_num(qty), "cell_r"),
+                _ph(unit[:12], "cell"),
+                _ph(_fmt_num(up), "cell_r"),
+                _ph(_fmt_num(amt), "cell_r"),
+                _ph(_fmt_num(l_ttc), "cell_r"),
+            ])
+        else:
+            items_rows.append([
+                _ph(desig[:55], "cell"),
+                _ph(_fmt_num(qty), "cell_r"),
+                _ph(unit[:12], "cell"),
+                _ph(_fmt_num(up), "cell_r"),
+                _ph(_fmt_num(amt), "cell_r"),
+            ])
 
     if not items:
-        items_rows.append([
-            _ph("Aucun article extrait", "cell"),
-            _ph("", "cell"), _ph("", "cell"), _ph("", "cell"), _ph("", "cell"),
-        ])
+        ncols = 6 if has_line_ttc else 5
+        items_rows.append(
+            [_ph("Aucun article extrait", "cell")]
+            + [_ph("", "cell") for _ in range(ncols - 1)]
+        )
 
     items_table = Table(items_rows, colWidths=cw, repeatRows=1)
     row_count = len(items_rows)
@@ -640,25 +705,39 @@ def generate_invoice_report_pdf(
     totals_data = [
         [Paragraph("Total HT / HTVA:", styles["total_label"]), Paragraph(_fmt_tnd(htva), styles["total_value"])],
         [Paragraph(tva_lbl, styles["total_label"]), Paragraph(_fmt_tnd(tva), styles["total_value"])],
-        [Paragraph("Timbre:", styles["total_label"]), Paragraph(_fmt_tnd(timbre), styles["total_value"])],
-        [Paragraph("Total TTC:", styles["ttc_label"]), Paragraph(_fmt_tnd(ttc), styles["ttc_value"])],
     ]
+    show_timbre = timbre is not None
+    try:
+        show_timbre = show_timbre and float(timbre) > 0  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        show_timbre = False
+    if show_timbre:
+        totals_data.append(
+            [Paragraph("Timbre:", styles["total_label"]), Paragraph(_fmt_tnd(timbre), styles["total_value"])]
+        )
+    ttc_row_idx = len(totals_data)
+    totals_data.append(
+        [Paragraph("Total TTC:", styles["ttc_label"]), Paragraph(_fmt_tnd(ttc), styles["ttc_value"])]
+    )
     tot_col1 = 35 * mm
     tot_col2 = 45 * mm
     totals_inner = Table(totals_data, colWidths=[tot_col1, tot_col2])
-    totals_inner.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 2), C_TOTAL_BG),
-        ("BACKGROUND", (0, 3), (-1, 3), C_TTC_BG),
+    last_i = len(totals_data) - 1
+    pre_ttc = last_i - 1
+    ts_tot: list[tuple] = [
+        ("BACKGROUND", (0, 0), (-1, pre_ttc), C_TOTAL_BG),
+        ("BACKGROUND", (0, ttc_row_idx), (-1, ttc_row_idx), C_TTC_BG),
         ("BOX", (0, 0), (-1, -1), 0.75, C_GREEN_BORDER),
-        ("LINEABOVE", (0, 3), (-1, 3), 1.0, C_GREEN_MID),
-        ("INNERGRID", (0, 0), (-1, 2), 0.25, C_GREEN_BORDER),
+        ("LINEABOVE", (0, ttc_row_idx), (-1, ttc_row_idx), 1.0, C_GREEN_MID),
+        ("INNERGRID", (0, 0), (-1, pre_ttc), 0.25, C_GREEN_BORDER),
         ("TOPPADDING", (0, 0), (-1, -1), 4),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
         ("LEFTPADDING", (0, 0), (-1, -1), 6),
         ("RIGHTPADDING", (0, 0), (-1, -1), 6),
         ("ALIGN", (0, 0), (-1, -1), "RIGHT"),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-    ]))
+    ]
+    totals_inner.setStyle(TableStyle(ts_tot))
 
     # Place totals right-aligned using spacer + inner table
     spacer_w = content_w - tot_col1 - tot_col2 - 4 * mm
