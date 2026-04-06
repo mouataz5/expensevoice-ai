@@ -18,8 +18,9 @@ from app.schemas.invoice_pipeline import (
     OCRResult,
 )
 from app.services.confidence_scoring import compute_global_confidence
-from app.services.invoice_heuristics import heuristic_invoice_from_ocr
-from app.services.invoice_draft_merge import merge_draft_with_heuristic
+from app.services.extraction.surya_table_extractor import extract_invoice_lines_from_surya_metadata
+from app.services.invoice_heuristics import finalize_draft_line_math, fix_zero_values, heuristic_invoice_from_ocr
+from app.services.invoice_draft_merge import merge_llm_and_heuristic_invoice
 from app.services.invoice_llm_extract import (
     INVOICE_GLOBAL_SYSTEM_PROMPT,
     extract_invoice_with_llm,
@@ -30,9 +31,21 @@ from app.services.invoice_validation_service import (
     validate_invoice_draft,
 )
 from app.services.ocr_text_normalization import detect_currency_hint, excerpt_for_debug
-from app.utils.post_processing import post_correct_invoice_draft
+from app.utils.post_processing import post_correct_invoice_draft, post_process_invoice
 
 logger = logging.getLogger(__name__)
+
+
+def _trim_surya_table_debug(dbg: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Réduit la taille du blob debug tables pour les réponses API."""
+    if not dbg:
+        return None
+    out = dict(dbg)
+    for key in ("rows_before_validation", "rows_after_validation"):
+        rows = out.get(key)
+        if isinstance(rows, list) and len(rows) > 50:
+            out[key] = rows[:50] + [{"_truncated": len(rows) - 50}]
+    return out
 
 
 async def complete_invoice_extraction_from_normalized(
@@ -53,7 +66,10 @@ async def complete_invoice_extraction_from_normalized(
         invoice_id=invoice_id,
     ):
         draft, raw_llm = await extract_invoice_with_llm(normalized, transaction_type)
+        draft_llm_snapshot = draft.model_copy(deep=True)
 
+    merge_provenance: dict[str, str] = {}
+    surya_table_extraction_debug: dict[str, Any] | None = None
     with pipeline_stage(
         "heuristic_merge",
         component="invoice_pipeline",
@@ -62,7 +78,34 @@ async def complete_invoice_extraction_from_normalized(
         if raw_ocr.strip():
             heur = heuristic_invoice_from_ocr(raw_ocr, transaction_type)
             hd = heuristic_to_global_draft(heur)
-            draft = merge_draft_with_heuristic(draft, hd)
+            draft, merge_provenance = merge_llm_and_heuristic_invoice(draft, hd, raw_ocr)
+            draft, zero_journal = fix_zero_values(draft, raw_ocr, transaction_type)
+
+            _surya_lines, _surya_dbg = extract_invoice_lines_from_surya_metadata(
+                dict(ocr_for_confidence.metadata or {})
+            )
+            surya_table_extraction_debug = _surya_dbg
+            if _surya_dbg.get("applied_to_draft") and _surya_lines:
+                draft.items = _surya_lines
+                draft = finalize_draft_line_math(draft)
+                merge_provenance["line_items_source"] = "surya_table"
+                w = list(draft.warnings or [])
+                tag = "line_items_source:surya_table"
+                if tag not in w:
+                    w.append(tag)
+                draft.warnings = w
+                line_sum = sum(
+                    float(ln.line_subtotal or 0) for ln in _surya_lines if ln.line_subtotal is not None
+                )
+                sub = draft.subtotal_amount
+                if sub is not None and line_sum > 0:
+                    tol = max(5.0, 0.03 * abs(float(sub)))
+                    if abs(line_sum - float(sub)) > tol:
+                        draft.warnings = list(draft.warnings or []) + [
+                            "surya_line_sum_vs_draft_subtotal_mismatch"
+                        ]
+        else:
+            zero_journal: dict[str, Any] = {}
 
         if not (draft.currency or "").strip():
             hint = detect_currency_hint(raw_ocr)
@@ -75,7 +118,23 @@ async def complete_invoice_extraction_from_normalized(
         invoice_id=invoice_id,
     ):
         draft, post_corr = post_correct_invoice_draft(draft, raw_ocr)
-        post_corrections_payload = {k: v for k, v in post_corr.items() if v}
+        draft, pp_corr = post_process_invoice(draft, raw_ocr)
+        post_corrections_payload: dict[str, Any] = {}
+        for k, v in post_corr.items():
+            if v:
+                post_corrections_payload[k] = v
+        zf_trim = {k: v for k, v in (zero_journal or {}).items() if v}
+        if zf_trim:
+            post_corrections_payload["zero_value_fixes"] = zf_trim
+        if pp_corr and any(pp_corr.values()):
+            post_corrections_payload["post_process_invoice"] = pp_corr
+        if surya_table_extraction_debug is not None:
+            post_corrections_payload["surya_table_extraction"] = {
+                "applied": bool(surya_table_extraction_debug.get("applied_to_draft")),
+                "reason": surya_table_extraction_debug.get("reason"),
+                "line_count": surya_table_extraction_debug.get("line_count"),
+                "best_table_idx": surya_table_extraction_debug.get("best_table_idx"),
+            }
 
         validation = validate_invoice_draft(draft, raw_ocr)
         validation = enrich_validation_confidence(validation)
@@ -92,6 +151,12 @@ async def complete_invoice_extraction_from_normalized(
     if debug or os.getenv("INVOICE_DEBUG", "").lower() in ("1", "true", "yes"):
         _cap = 32000
         ocr_pv = str(ocr_for_confidence.metadata.get("provider") or "")
+        heur_snap: dict[str, Any] = {}
+        if raw_ocr.strip():
+            try:
+                heur_snap = dict(heuristic_invoice_from_ocr(raw_ocr, transaction_type))
+            except Exception:
+                heur_snap = {}
         dbg = InvoiceExtractionDebug(
             ocr_provider=ocr_pv or None,
             llm_provider=os.getenv("LLM_PROVIDER"),
@@ -112,6 +177,30 @@ async def complete_invoice_extraction_from_normalized(
                 _cap,
             ),
             post_corrections=post_corrections_payload or None,
+            heuristic_snapshot_excerpt=excerpt_for_debug(
+                json.dumps(heur_snap, ensure_ascii=False, default=str), min(_cap, 12000)
+            ),
+            zero_value_fixes_excerpt=excerpt_for_debug(
+                json.dumps(zf_trim if raw_ocr.strip() else {}, ensure_ascii=False, default=str),
+                4000,
+            ),
+            llm_draft_excerpt=excerpt_for_debug(
+                json.dumps(
+                    draft_llm_snapshot.model_dump(mode="json"),
+                    ensure_ascii=False,
+                    default=str,
+                ),
+                min(_cap, 12000),
+            ),
+            merged_draft_excerpt=excerpt_for_debug(
+                json.dumps(draft.model_dump(mode="json"), ensure_ascii=False, default=str),
+                min(_cap, 12000),
+            ),
+            field_provenance=merge_provenance if merge_provenance else None,
+            surya_table_extraction=_trim_surya_table_debug(surya_table_extraction_debug)
+            if (debug or os.getenv("INVOICE_DEBUG", "").lower() in ("1", "true", "yes"))
+            and surya_table_extraction_debug
+            else None,
         )
 
     return InvoiceExtractionResponse(

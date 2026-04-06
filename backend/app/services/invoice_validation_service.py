@@ -17,6 +17,7 @@ from app.schemas.invoice_pipeline import (
     NormalizedAmounts,
     ValidationFlag,
 )
+from app.services.invoice_heuristics import validate_invoice_math
 from app.utils.dates import is_valid_iso_date, parse_date_to_iso
 from app.utils.money import to_float_safe
 from app.services.ocr_text_normalization import detect_currency_hint
@@ -85,9 +86,12 @@ def validate_invoice_draft(
     if not draft.invoice_number or not str(draft.invoice_number).strip():
         missing.append("invoice_number")
 
-    # invoice number noise
+    # invoice number noise (ne pas avertir sur références FA…/20xx ou BL courants)
     if draft.invoice_number:
-        if re.fullmatch(r"[0-9OoIl]{1,4}", draft.invoice_number):
+        inv_norm = str(draft.invoice_number).strip()
+        if re.match(r"(?i)^FA\d{1,8}/\d{4}$", inv_norm) or len(inv_norm) >= 6:
+            pass
+        elif re.fullmatch(r"[0-9OoIl]{1,4}", inv_norm):
             warnings.append("Numéro de facture ressemble à du bruit OCR")
             flags.append(
                 ValidationFlag(code="invoice_number_suspicious", message="N° facture suspect", severity="warning")
@@ -200,6 +204,17 @@ def validate_invoice_draft(
         missing.append("supplier_name")
     if total is None or total <= 0:
         missing.append("total_amount")
+
+    for mw in validate_invoice_math(draft):
+        if mw not in warnings:
+            warnings.append(mw)
+        flags.append(
+            ValidationFlag(
+                code="invoice_math_hint",
+                message=mw,
+                severity="warning",
+            )
+        )
 
     fc = dict(draft.field_confidence or {})
     gc = float(draft.global_confidence or 0.0)

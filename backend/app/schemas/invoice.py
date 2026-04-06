@@ -1,4 +1,5 @@
 """Invoice API schemas — preview exposes structured extraction for review UI."""
+import os
 from datetime import datetime
 from typing import Any
 
@@ -91,12 +92,16 @@ def invoice_to_preview(inv: Any) -> dict:
         )
     )
 
+    strip_ocr = os.getenv("INVOICE_PREVIEW_STRIP_OCR", "1").lower() in ("1", "true", "yes")
+    ocr_out = "" if strip_ocr else (inv.ocr_text or "")
+    norm_out = "" if strip_ocr else (extracted.get("normalized_text") or "")
+
     return {
         "id": str(inv.id),
         "status": inv.status,
         "created_at": inv.created_at,
-        "ocr_text": inv.ocr_text or "",
-        "normalized_text": extracted.get("normalized_text") or "",
+        "ocr_text": ocr_out,
+        "normalized_text": norm_out,
         "supplier_name": (flat.get("supplier_name") or extracted.get("supplier_name") or inv.supplier_name),
         "invoice_number": (flat.get("invoice_number") or extracted.get("invoice_number") or inv.invoice_number),
         "invoice_date": flat.get("invoice_date") or extracted.get("invoice_date"),

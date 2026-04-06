@@ -151,9 +151,14 @@ _INV_NUM_RE = re.compile(
     r"(?i)(?:n[o°]\s*facture|facture\s*n[o°]|facture|n[o°]|n\.|réf|ref)\s*[:\s]?\s*([A-Z0-9][A-Z0-9\-/]{4,30})"
 )
 _INV_FA_REF_RE = re.compile(r"\b(FA\d{2,8}/\d{4})\b", re.I)
+_INV_BL_REF_RE = re.compile(r"\b([A-Z]{1,4}[\-]?\d{2,10}/\d{4})\b", re.I)
+_CLIENT_MF_RE = re.compile(
+    r"(?i)\b(\d{5,12}(?:/[A-Z0-9]+)+(?:/\d{3})?)\b",
+)
+# Long OCR-glued rows (detail + "Product qty pu total") need >45 chars before first number.
 _LINE_ITEM_RE = re.compile(
-    r"(?im)^\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ0-9\s%'\-]{2,45}?)\s+"
-    r"(\d[\d\s.,]{1,14})\s+(\d[\d\s.,]{1,14})\s+(\d[\d\s.,]{1,16})\s*$"
+    r"(?im)^\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ0-9\s%'\-]{2,180}?)\s+"
+    r"(\d(?:[\d\s.,]{0,14}))\s+(\d(?:[\d\s.,]{0,14}))\s+(\d(?:[\d\s.,]{0,16}))\s*$"
 )
 
 
@@ -165,6 +170,15 @@ def _parse_amount_token(raw: str) -> float | None:
     t = re.sub(r"(?i)TND|EUR|USD|DT|DNT|QX\b", "", t).strip()
     if not t or not any(c.isdigit() for c in t):
         return None
+    # "44 723.000" / "8 407.070" — espaces milliers, dernier bloc .### = millimes TN
+    m_spdot = re.fullmatch(r"(\d{1,3}(?:\s\d{3})+)\.(\d{3,4})$", t)
+    if m_spdot:
+        whole = m_spdot.group(1).replace(" ", "")
+        frac = m_spdot.group(2)
+        try:
+            return float(f"{whole}.{frac}")
+        except ValueError:
+            pass
     # "5 810,000" / "22 176,003" — spaces = thousands, comma = decimal (millimes)
     m_sp = re.fullmatch(r"(\d{1,3}(?:\s\d{3})*)([.,])(\d{1,4})", t)
     if m_sp:
@@ -208,7 +222,7 @@ def _parse_amount_token(raw: str) -> float | None:
 
 
 _AMT_TOKEN_RE = re.compile(
-    r"\d{1,3}(?:\s\d{3})+,\d+|\d{1,3}(?:\.\d{3})+,\d+|\d{1,3}(?:\.\d{3})+\.\d+"
+    r"\d{1,3}(?:\s\d{3})+,\d+|\d{1,3}(?:\s\d{3})+\.\d+|\d{1,3}(?:\.\d{3})+,\d+|\d{1,3}(?:\.\d{3})+\.\d+"
     r"|\d+,\d{2,4}(?!\d)|\d[\d\s.,]{0,22}\d|\d{2,}"
 )
 
@@ -265,6 +279,52 @@ def _space_separated_amount_tally(line: str) -> int:
     return n
 
 
+# Table row like "613 ALCO 7 PRIMO …" — must not be glued onto client/city line above.
+_STPA_SKU_LINE_START = re.compile(r"^\s*\d{3}\s+[A-Za-zÀ-ÿ]")
+
+
+def _is_probable_table_header_line(cur: str) -> bool:
+    """Évite de coller la ligne d’en-tête colonnes sur la première ligne article."""
+    ul = (cur or "").strip().upper()
+    if len(ul) > 160:
+        return False
+    keys = (
+        "DESIGNATION",
+        "ARTICLE",
+        "LIBELLE",
+        "UNITE",
+        "QTE",
+        "QUANTIT",
+        "P.U",
+        "PU ",
+        "P.HT",
+        "P HT",
+        "MONTANT",
+        "SOUS-TOTAL",
+    )
+    hits = sum(1 for k in keys if k in ul)
+    return hits >= 2
+
+
+def _glue_skip_client_or_table_boundary(cur: str, nxt: str) -> bool:
+    """Avoid merging client name / locality with the first numeric product row (STPA, SOCEP city)."""
+    if not cur or not nxt or any(ch.isdigit() for ch in cur):
+        return False
+    if _STPA_SKU_LINE_START.match(nxt):
+        return True
+    if re.match(r"(?i)^(STE|SARL|EURL|ETS)\b", cur.strip()):
+        return True
+    parts = cur.split()
+    if (
+        1 <= len(parts) <= 4
+        and cur.strip().upper() == cur.strip()
+        and len(cur.strip()) <= 48
+        and re.fullmatch(r"[A-ZÀÂÄÉÈÊËÏÎÔÙÛÜÇ\s'\-]+", cur.strip().upper())
+    ):
+        return True
+    return False
+
+
 def _glue_split_numeric_followups(text: str) -> str:
     """
     OCR often puts the product label on one line and qty / PU / total on the next.
@@ -289,6 +349,8 @@ def _glue_split_numeric_followups(text: str) -> str:
                 has_label
                 and nums_cur < 2
                 and n_tally >= 3
+                and not _is_probable_table_header_line(cur)
+                and not _glue_skip_client_or_table_boundary(cur, nxt)
                 and not re.match(
                     r"(?i)^(total|sous|tva|timbre|net|facture|date|n°|n[o°]|réf|ref|client|societe|mf|matricule)\b",
                     cur,
@@ -416,9 +478,7 @@ def _heur_abbes_header_fallback(text: str) -> str:
         s = ln.strip()
         if len(s) < 12:
             continue
-        if re.search(r"(?i)ABBES", s) and re.search(
-            r"(?i)STE|SARL|VOLAILLE|POUR", s
-        ):
+        if re.search(r"(?i)ABBES", s) and re.search(r"(?i)\bSTE\b|SARL\b", s):
             return s[:240]
     return ""
 
@@ -447,6 +507,31 @@ def _heur_top_non_abbes_company(text: str) -> str:
         if _ISSUER_LINE_HINT.search(s):
             return s[:240]
         if re.search(r"(?i)^(STE|SARL|EURL|SOCIETE|USINE)\s+", s):
+            return s[:240]
+    return ""
+
+
+def _heur_emitter_before_client_block(text: str) -> str:
+    """Raison sociale au-dessus du bloc CLIENT / SOCIETE (devis, factures tierces)."""
+    lines = (text or "").splitlines()
+    stop = len(lines)
+    for i, ln in enumerate(lines):
+        ul = ln.strip().upper()
+        if re.match(r"^(CLIENT|SOCIETE\s*:|DESTINATAIRE|ACHETEUR)\s*$", ul):
+            stop = i
+            break
+    for ln in lines[:stop]:
+        s = ln.strip()
+        if len(s) < 6:
+            continue
+        if re.search(r"(?i)^(MF|M\.F|TEL|FAX|DATE|N°|DEVIS|FACTURE|SOUS-TOTAL|TOTAL)\b", s):
+            continue
+        if s.upper() in ("EAE",):
+            continue
+        if re.search(
+            r"(?i)\b(STE|SARL|EURL|ETS|SOCIETE|SOCIÉTÉ|ENTREPRISE|USINE|EURL)\b",
+            s,
+        ):
             return s[:240]
     return ""
 
@@ -483,10 +568,72 @@ def _heur_find_supplier(text: str, transaction_type: str) -> str:
         return leg[:240]
     if leg:
         return leg[:240]
+    emit = _heur_emitter_before_client_block(text)
+    if emit and client and emit.strip().upper() != client.strip().upper():
+        return emit[:240]
     return client or ""
 
 
+def _fix_line_designation_ocr(desig: str, ctx_upper: str) -> str:
+    """Corrections Courantes OCR sur libellés produits (contexte volaille / TN)."""
+    d = re.sub(r"\s+", " ", (desig or "").strip())
+    if not d:
+        return d
+    food = bool(
+        re.search(
+            r"(?i)POUSSIN|CHAIR|VOLAILLE|ALIMENT|SOCEP|ABBES|POUSSINS|CENTRE\s+DES\s+POUSSINS",
+            ctx_upper,
+        )
+    )
+    if food:
+        if re.match(r"(?i)^ate\s+", d):
+            d = re.sub(r"(?i)^ate\s+", "Poussin ", d, count=1)
+        elif d.strip().lower() in ("ate", "ate."):
+            d = "Poussin chair"
+        if re.search(r"(?i)poussin\s+cha1r|poussin\s+chail", d):
+            d = re.sub(r"(?i)cha1r|chail", "chair", d)
+    return d[:200]
+
+
+def _heur_invoice_number_line_first(text: str) -> str:
+    """Priorité : même ligne que N° FACTURE / FACTURE N°, puis référence FA… / BL…."""
+    for ln in (text or "").splitlines():
+        ls = ln.strip()
+        if len(ls) < 5:
+            continue
+        ul = ls.upper()
+        if re.search(r"(?i)N[°O\.\s]*FACTURE|FACTURE\s*N[°O]", ul):
+            m = _INV_FA_REF_RE.search(ls)
+            if m:
+                return m.group(1).strip()[:80]
+            m2 = _INV_BL_REF_RE.search(ls)
+            if m2 and len(m2.group(1)) <= 36:
+                return m2.group(1).strip()[:80]
+            m3 = re.search(
+                r"(?i)(?:N[°O\.\s]*FACTURE|FACTURE\s*N[°O])\s*[:\s]*([A-Z0-9][A-Z0-9\-/]{3,34})",
+                ls,
+            )
+            if m3 and not re.match(r"^20\d{2}$", m3.group(1)):
+                return m3.group(1).strip()[:80]
+    return ""
+
+
 def _heur_find_invoice_number(text: str) -> str:
+    for ln in (text or "").splitlines():
+        ls = ln.strip()
+        ul = ls.upper()
+        if re.search(r"(?i)\bDEVIS\s*N", ul):
+            m = re.search(
+                r"(?i)DEVIS\s*N[°O.\s]*[:\s]*([A-Z0-9][A-Z0-9\-/]{2,42})",
+                ls,
+            )
+            if m:
+                cand = m.group(1).strip()
+                if not re.fullmatch(r"\d{1,2}", cand):
+                    return cand[:80]
+    hit = _heur_invoice_number_line_first(text)
+    if hit:
+        return hit
     m = _INV_FA_REF_RE.search(text)
     if m:
         return m.group(1).strip()[:80]
@@ -494,6 +641,279 @@ def _heur_find_invoice_number(text: str) -> str:
     if m:
         return m.group(1).strip()[:80]
     return ""
+
+
+def _heur_find_payment_due_date(text: str) -> str:
+    """Date d’échéance après DELAIS DE PAIEMENT, ÉCHÉANCE, etc."""
+    for ln in (text or "").splitlines():
+        ul = ln.upper()
+        if not re.search(
+            r"(?i)DELAI|DÉLAI|ECHEANCE|ÉCHÉANCE|PAIEMENT\s*AVANT|DATE\s+LIMITE",
+            ul,
+        ):
+            continue
+        m = _DATE_DM_RE.search(ln)
+        if m:
+            d, mo, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            if 1 <= d <= 31 and 1 <= mo <= 12:
+                return f"{y:04d}-{mo:02d}-{d:02d}"
+    return ""
+
+
+def _heur_find_client_tax_id(text: str, client_name: str = "") -> str:
+    raw = text or ""
+    lines = raw.splitlines()
+    start_i = 0
+    for i, ln0 in enumerate(lines):
+        ul0 = ln0.strip().upper()
+        if re.match(
+            r"^(CLIENT|SOCIETE\s*:?\s*|DESTINATAIRE|ACHETEUR|FACTURER?\s*A)\s*$",
+            ul0,
+        ):
+            start_i = i + 1
+            break
+    segment_lines = lines[start_i:] if start_i else lines
+    for ln in segment_lines:
+        ls = ln.strip()
+        m = _CLIENT_MF_RE.search(ls)
+        if m:
+            return m.group(1).strip()[:80]
+        if re.search(r"(?i)\bM\.?\s*F\.?\s*[\.:]?\s*", ls):
+            rest = re.split(r"(?i)\bM\.?\s*F\.?\s*[\.:]?\s*", ls, maxsplit=1)
+            if len(rest) > 1 and rest[1].strip():
+                cand = rest[1].strip().split()[0][:80]
+                if len(cand) >= 5:
+                    return cand
+    if client_name:
+        ul_full = "\n".join(segment_lines).upper()
+        idx = ul_full.find((client_name or "").strip().upper()[:20])
+        if idx >= 0:
+            snippet = "\n".join(segment_lines)[idx : idx + 800]
+            m2 = _CLIENT_MF_RE.search(snippet)
+            if m2:
+                return m2.group(1).strip()[:80]
+    return ""
+
+
+def _heur_find_client_city(text: str, client_name: str) -> str:
+    if not client_name or not (client_name or "").strip():
+        return ""
+    lines = [ln.rstrip() for ln in (text or "").splitlines()]
+    cn = (client_name or "").strip().upper()
+    for i, ln in enumerate(lines):
+        if cn in ln.upper():
+            for j in range(i + 1, min(i + 12, len(lines))):
+                cand = lines[j].strip()
+                if len(cand) < 3 or len(cand) > 80:
+                    continue
+                cul = cand.upper()
+                if _CLIENT_MF_RE.search(cand):
+                    continue
+                if re.match(
+                    r"(?i)^(MF|M\.F|MATRICULE|N°|DATE|SOCIETE|CLIENT|FACTURE|TEL|FAX)\b",
+                    cul,
+                ):
+                    continue
+                if re.search(
+                    r"(?i)^(DESIGNATION|ARTICLE|LIBELLE|UNITE|QTE|QUANT|P\.U|P\.HT)\b",
+                    cul,
+                ):
+                    continue
+                if re.search(r"^\d+[\s.,]+\d+[\s.,]+\d", cand):
+                    continue
+                if _STPA_SKU_LINE_START.match(cand):
+                    continue
+                if _space_separated_amount_tally(cand) >= 3:
+                    continue
+                if any(ch.isdigit() for ch in cand):
+                    continue
+                if re.search(r"[A-Za-zÀ-ÿ]{3,}", cand) and not re.match(r"^\d+$", cand):
+                    return cand[:120]
+            break
+    return ""
+
+
+def _heur_supplier_split(issuer_line: str) -> tuple[str, str]:
+    """SOCEP → nom court + raison sociale ; sinon conserver la ligne complète (évite « STE » seul)."""
+    line = re.sub(r"\s+", " ", (issuer_line or "").strip())
+    if not line:
+        return "", ""
+    if re.match(r"(?i)^SOCEP\b", line):
+        return "SOCEP", line[:240]
+    return line[:240], line[:240]
+
+
+_PHONE_TN_LINE_RE = re.compile(
+    r"(?i)(?:TEL|FIX|TÉL|TÉLEPHONE|MOBILE|GSM)[.:\s]*(\d{2}[\s.-]?\d{3}[\s.-]?\d{3})\b"
+)
+_PHONE_DOT_RE = re.compile(r"\b(\d{2}\.\d{3}\.\d{3})\b")
+_SUP_TAX_COMPACT_RE = re.compile(r"\b(\d{6,9}[A-Z])\b", re.I)
+
+
+def _heur_document_type_from_text(text: str) -> str:
+    ul = (text or "").upper()
+    if re.search(
+        r"\b(DEVIS|PROPOSITION\s+COMMERCIALE|OFFRE\s+COMMERCIALE)\b",
+        ul,
+    ):
+        return "quote"
+    if re.search(r"\bQUOTE\b", text or "", re.I):
+        return "quote"
+    return "invoice"
+
+
+def _heur_supplier_phone(text: str) -> str:
+    raw = (text or "")[:4500]
+    m = _PHONE_TN_LINE_RE.search(raw)
+    if not m:
+        m = _PHONE_DOT_RE.search(raw)
+    if not m:
+        return ""
+    g = m.group(1)
+    return re.sub(r"[\s-]+", ".", g.strip())[:32]
+
+
+def _heur_supplier_tax_id_top(text: str) -> str:
+    lines = (text or "").splitlines()[:48]
+    in_client = False
+    for ln in lines:
+        ul = ln.upper()
+        if re.search(r"\b(CLIENT|SOCIETE\s*:|DESTINATAIRE|ACHETEUR)\b", ul):
+            in_client = True
+        if _CLIENT_MF_RE.search(ln) and (in_client or "/" in ln):
+            continue
+        m = _SUP_TAX_COMPACT_RE.search(ln)
+        if m and "/" not in ln.strip():
+            return m.group(1).upper()[:32]
+    return ""
+
+
+def _heur_supplier_city_after_phone(text: str) -> str:
+    lines = [ln.strip() for ln in (text or "").splitlines()[:38]]
+    for i, s in enumerate(lines):
+        if re.search(r"(?i)TEL|FIX|TÉL|GSM", s) and i + 1 < len(lines):
+            nxt = lines[i + 1]
+            if (
+                nxt
+                and 2 <= len(nxt.split()) <= 6
+                and not any(ch.isdigit() for ch in nxt)
+                and not re.match(
+                    r"(?i)^(MF|M\.F|N°|DATE|DEVIS|FACTURE|TOTAL|SOUS)\b",
+                    nxt,
+                )
+            ):
+                return nxt[:120]
+    return ""
+
+
+def _heur_tax_rate_percent(text: str) -> float | None:
+    m = re.search(r"(?i)TVA\s*[:\s]*(\d{1,2}(?:[.,]\d+)?)\s*%", text or "")
+    if not m:
+        m = re.search(r"(?i)(\d{1,2})\s*%\s*(?:TVA|T\.V\.A\b)", text or "")
+    if not m:
+        return None
+    v = m.group(1).replace(",", ".")
+    try:
+        x = float(v)
+        return x if 0 < x < 35 else None
+    except ValueError:
+        return None
+
+
+def _heur_find_paid_and_remaining(text: str) -> tuple[float | None, float | None]:
+    paid: float | None = None
+    remaining: float | None = None
+    for ln in (text or "").splitlines():
+        ul = ln.upper()
+        nums = _extract_numbers_from_line(ln)
+        if not nums:
+            continue
+        if ("PAIEMENT" in ul or "PAIMENTS" in ul or "REÇUS" in ul or "RECUS" in ul) and "RESTE" not in ul:
+            big = [n for n in nums if n >= 5 and not _is_likely_year(n)]
+            if big:
+                paid = float(max(big))
+        if "RESTE DU" in ul or "RESTE À" in ul or "RESTE A " in ul:
+            small = [n for n in nums if n >= 0]
+            if small:
+                remaining = float(min(small))
+            elif re.search(r"(?i)RESTE.+(0[.,]0+\b|\.0+\s*TND)", ln):
+                remaining = 0.0
+    return paid, remaining
+
+
+def extract_supplier_block(ocr_text: str, transaction_type: str = "buy") -> Dict[str, Any]:
+    """Bloc fournisseur (haut de page) : raison sociale courte + nom complet."""
+    text = _glue_split_numeric_followups((ocr_text or "").strip())
+    if not text:
+        return {"supplier_name": "", "supplier_full_name": ""}
+    issuer = _heur_find_supplier(text, transaction_type)
+    short, full = _heur_supplier_split(issuer)
+    return {"supplier_name": short or (issuer or "")[:80], "supplier_full_name": full or (issuer or "")[:240]}
+
+
+def extract_client_block(ocr_text: str) -> Dict[str, Any]:
+    """Bloc client après SOCIETE / CLIENT : nom, MF, ville."""
+    text = _glue_split_numeric_followups((ocr_text or "").strip())
+    if not text:
+        return {}
+    client_name = _heur_find_client_line(text) or ""
+    tax = _heur_find_client_tax_id(text, client_name)
+    city = _heur_find_client_city(text, client_name)
+    return {
+        "client_name": client_name or None,
+        "client_tax_id": tax or None,
+        "client_city": city or None,
+    }
+
+
+def extract_invoice_header(ocr_text: str) -> Dict[str, Any]:
+    """N° facture, date facture, date échéance (heuristique déterministe)."""
+    text = _glue_split_numeric_followups((ocr_text or "").strip())
+    if not text:
+        return {}
+    inv = _heur_find_invoice_number(text)
+    d_invoice = _heur_find_invoice_date(text)
+    d_due = _heur_find_payment_due_date(text)
+    return {
+        "invoice_number": inv or None,
+        "invoice_date": d_invoice or None,
+        "payment_due_date": d_due or None,
+    }
+
+
+def extract_line_items_block(ocr_text: str) -> List[Dict[str, Any]]:
+    """Parsing tableau articles : regex existantes + paires OCR ligne libellé / ligne chiffres."""
+    raw = (ocr_text or "").strip()
+    text = _glue_split_numeric_followups(raw)
+    if not text:
+        return []
+    items = _heur_find_line_items(text)
+    try:
+        from app.services.invoice_table_parser import merge_parser_line_items
+
+        return merge_parser_line_items(raw, text, items)
+    except Exception:
+        logger.debug("merge_parser_line_items fallback", exc_info=True)
+        return items
+
+
+def extract_totals_extended(ocr_text: str) -> Dict[str, Any]:
+    """Totaux + paiement / reliquat détectés sur les libellés de bas de page."""
+    text = _glue_split_numeric_followups((ocr_text or "").strip())
+    if not text:
+        return {}
+    items = _heur_find_line_items(text)
+    sub, tva, timbre, ttc = _heur_find_totals(text, items)
+    paid, rem = _heur_find_paid_and_remaining(text)
+    out: Dict[str, Any] = {
+        "subtotal_htva": float(sub) if sub is not None else None,
+        "tax_amount": float(tva) if tva is not None else None,
+        "stamp_duty": float(timbre) if timbre is not None else None,
+        "total_ttc": float(ttc) if ttc is not None else None,
+        "amount_paid": float(paid) if paid is not None else None,
+        "remaining_due": float(rem) if rem is not None else None,
+    }
+    return out
 
 
 def _heur_find_invoice_date(text: str) -> str:
@@ -505,16 +925,60 @@ def _heur_find_invoice_date(text: str) -> str:
     return ""
 
 
+def _reconcile_qty_unit_line_total(q: float, pu: float, lt: float) -> tuple[float, float]:
+    """Ajuste (qty, PU) si l’OCR mélange ordre des colonnes ou PU en « millimes » entiers."""
+    if lt <= 0 or q <= 0 or pu < 0:
+        return q, pu
+    tol = max(2.0, lt * 0.08)
+
+    def _ok(a: float, b: float) -> bool:
+        return a > 0 and b >= 0 and abs(a * b - lt) <= tol
+
+    candidates: list[tuple[float, float]] = []
+    if _ok(q, pu):
+        candidates.append((q, pu))
+    if _ok(pu, q):
+        candidates.append((pu, q))
+    for qq, ppu in (
+        (q, pu / 1000.0),
+        (pu, q / 1000.0),
+        (q / 1000.0, pu),
+        (pu / 1000.0, q),
+    ):
+        if _ok(qq, ppu):
+            candidates.append((qq, ppu))
+    if not candidates:
+        return q, pu
+
+    def _score(qq: float, ppu: float) -> tuple[float, float]:
+        """Higher is better; larger qty breaks ties (bulk agricultural lines)."""
+        s = 0.0
+        if 0.01 <= ppu <= 120 and qq >= 50:
+            s += 120.0
+        if 0.5 <= ppu <= 40 and qq >= 500:
+            s += 80.0
+        if qq >= 200 and qq >= ppu * 1.15:
+            s += 40.0
+        if qq < 150 and ppu > 200 and lt < 1_000_000:
+            s -= 60.0
+        err = abs(qq * ppu - lt) / max(lt, 1.0)
+        return (s - err * 10.0, qq)
+
+    best = max(candidates, key=lambda t: _score(t[0], t[1]))
+    return round(best[0], 6), round(best[1], 6)
+
+
 def _heur_find_line_items(text: str) -> List[Dict[str, Any]]:
     items: List[Dict[str, Any]] = []
     seen: set[tuple[str, float]] = set()
+    upper_ctx = (text[:5000]).upper()
     for line in text.splitlines():
         line_stripped = line.strip()
         if len(line_stripped) < 12:
             continue
         m = _LINE_ITEM_RE.match(line_stripped)
         if m:
-            desig = re.sub(r"\s+", " ", m.group(1).strip())
+            desig = _fix_line_designation_ocr(re.sub(r"\s+", " ", m.group(1).strip()), upper_ctx)
             q = _parse_amount_token(m.group(2))
             pu = _parse_amount_token(m.group(3))
             lt = _parse_amount_token(m.group(4))
@@ -522,9 +986,11 @@ def _heur_find_line_items(text: str) -> List[Dict[str, Any]]:
                 continue
             if lt is None:
                 lt = round(q * pu, 3)
-            if q and pu and lt and abs(q * pu - lt) > max(2.0, lt * 0.08):
-                q, pu = pu, q
+            if q and pu and lt:
+                q, pu = _reconcile_qty_unit_line_total(float(q), float(pu), float(lt))
             if q <= 0 or pu < 0:
+                continue
+            if lt and abs(float(q) * float(pu) - float(lt)) > max(2.0, float(lt) * 0.08):
                 continue
             key = (desig[:48], round(float(lt), 3))
             if key not in seen:
@@ -551,7 +1017,10 @@ def _heur_find_line_items(text: str) -> List[Dict[str, Any]]:
             )
             if not m_am:
                 continue
-            desig = rest[: m_am.start()].strip()
+            desig = _fix_line_designation_ocr(
+                rest[: m_am.start()].strip(),
+                upper_ctx,
+            )
             tail = rest[m_am.start() :].strip()
             if len(desig) < 2:
                 continue
@@ -568,6 +1037,7 @@ def _heur_find_line_items(text: str) -> List[Dict[str, Any]]:
                     picked = (a, b, lt)
             if picked:
                 a, b, lt = picked
+                a, b = _reconcile_qty_unit_line_total(float(a), float(b), float(lt))
                 key = (desig[:48], round(float(lt), 3))
                 if key not in seen:
                     seen.add(key)
@@ -587,13 +1057,18 @@ def _heur_find_line_items(text: str) -> List[Dict[str, Any]]:
         vals = [v for x in nums_raw if (v := _parse_amount_token(x)) is not None and v > 0]
         if len(vals) < 3:
             continue
-        des_m = re.match(r"^\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ0-9\s%'\-]{2,45}?)\s+", line_stripped)
+        des_m = re.match(r"^\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ0-9\s%'\-]{2,180}?)\s+", line_stripped)
         if not des_m:
             continue
-        desig = re.sub(r"\s+", " ", des_m.group(1).strip())
+        desig = re.sub(
+            r"\s+",
+            " ",
+            _fix_line_designation_ocr(des_m.group(1).strip(), upper_ctx),
+        )
         a, b, lt = vals[-3], vals[-2], vals[-1]
         if lt < 10:
             continue
+        a, b = _reconcile_qty_unit_line_total(float(a), float(b), float(lt))
         if abs(a * b - lt) > max(2.0, lt * 0.08):
             continue
         key = (desig[:48], round(float(lt), 3))
@@ -688,8 +1163,15 @@ def _heur_find_totals(
                 if 0 < n < 100000:
                     tva_vals.append(n)
         elif re.search(r"\bTVA\b", ul) and "TIMBRE" not in ul:
-            for n in nums:
-                if 1 < n < 100000:
+            big = [n for n in nums if n > 100]
+            seq = big if big else nums
+            pct_in_line = "%" in ul
+            for n in seq:
+                if n <= 0:
+                    continue
+                if pct_in_line and n < 35:
+                    continue
+                if 1 < n < 1000000:
                     tva_vals.append(n)
 
     def _pick_max_plausible_ttc(
@@ -755,33 +1237,57 @@ def heuristic_invoice_from_ocr(
     ocr_text: str, transaction_type: str = "buy"
 ) -> Dict[str, Any]:
     """Build partial invoice dict from OCR regex/heuristics (no LLM)."""
-    text = (ocr_text or "").strip()
-    if not text:
+    raw_ocr = (ocr_text or "").strip()
+    if not raw_ocr:
         return {}
-    text = _glue_split_numeric_followups(text)
-    supplier = _heur_find_supplier(text, transaction_type)
-    client_line = _heur_find_client_line(text)
-    invoice_number = _heur_find_invoice_number(text)
-    invoice_date = _heur_find_invoice_date(text)
+    text = _glue_split_numeric_followups(raw_ocr)
+    sb = extract_supplier_block(text, transaction_type)
+    cb = extract_client_block(text)
+    hd = extract_invoice_header(text)
     items = _heur_find_line_items(text)
-    subtotal, tva, timbre, ttc = _heur_find_totals(text, items)
+    totals_ex = extract_totals_extended(text)
 
     currency = "TND"
     if re.search(r"\bEUR\b", text, re.I):
         currency = "EUR"
     elif re.search(r"\bUSD\b", text, re.I):
         currency = "USD"
+    if re.search(r"\bTND\b|\bMILLIM|DEN\b|دينار", text, re.I):
+        currency = "TND"
+
+    doc_type = _heur_document_type_from_text(raw_ocr)
+    sup_phone = _heur_supplier_phone(raw_ocr)
+    sup_tax = _heur_supplier_tax_id_top(raw_ocr)
+    sup_city = _heur_supplier_city_after_phone(raw_ocr)
+    tax_rate = _heur_tax_rate_percent(raw_ocr)
+
+    pay_due = hd.get("payment_due_date") or ""
+    inv_date = hd.get("invoice_date") or ""
+    # Si l’OCR ne montre qu’une date de facture (souvent identique à l’échéance affichée ailleurs)
+    if (inv_date or "").strip() and not (pay_due or "").strip():
+        pay_due = inv_date
 
     out: Dict[str, Any] = {
-        "supplier_name": supplier,
-        "client_name": client_line or None,
-        "invoice_number": invoice_number,
-        "invoice_date": invoice_date,
+        "document_type": doc_type,
+        "supplier_name": sb.get("supplier_name") or None,
+        "supplier_full_name": sb.get("supplier_full_name") or None,
+        "supplier_tax_id": sup_tax or None,
+        "supplier_phone": sup_phone or None,
+        "supplier_address": sup_city or None,
+        "tax_rate_percent": tax_rate,
+        "client_name": cb.get("client_name"),
+        "client_tax_id": cb.get("client_tax_id"),
+        "client_city": cb.get("client_city"),
+        "invoice_number": hd.get("invoice_number") or "",
+        "invoice_date": inv_date or "",
+        "payment_due_date": pay_due or None,
         "items": items,
-        "subtotal_htva": float(subtotal) if subtotal is not None else None,
-        "tax_amount": float(tva) if tva is not None else None,
-        "stamp_duty": float(timbre) if timbre is not None else None,
-        "total_ttc": float(ttc) if ttc is not None else None,
+        "subtotal_htva": totals_ex.get("subtotal_htva"),
+        "tax_amount": totals_ex.get("tax_amount"),
+        "stamp_duty": totals_ex.get("stamp_duty"),
+        "total_ttc": totals_ex.get("total_ttc"),
+        "amount_paid": totals_ex.get("amount_paid"),
+        "remaining_due": totals_ex.get("remaining_due"),
         "currency": currency,
     }
     return out

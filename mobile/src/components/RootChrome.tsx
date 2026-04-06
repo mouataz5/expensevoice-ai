@@ -7,10 +7,10 @@ import { OfflineBanner } from "./ui/OfflineBanner";
 export function RootChrome({ children }: { children: ReactNode }) {
   const { t } = useLocale();
   const qc = useQueryClient();
-  const { setAssumedOnline } = useNetwork();
+  const { refreshNetworkState } = useNetwork();
 
   const onRetry = () => {
-    setAssumedOnline();
+    void refreshNetworkState();
     void qc.invalidateQueries();
   };
 

@@ -4,10 +4,12 @@ import { useRouter } from "expo-router";
 import Toast from "react-native-toast-message";
 import { useAuth } from "../src/context/AuthContext";
 import { useLocale } from "../src/context/LocaleContext";
+import { useNetwork } from "../src/context/NetworkContext";
 import { login } from "../src/api/auth";
 import { setPendingToken } from "../src/api/client";
+import { formatApiError } from "../src/utils/apiError";
 import { colors } from "../src/theme/colors";
-import { font, radius, space } from "../src/theme/tokens";
+import { font, space } from "../src/theme/tokens";
 import {
   Card,
   PrimaryButton,
@@ -19,6 +21,7 @@ import {
 
 export default function LoginScreen() {
   const { t } = useLocale();
+  const { isConnected, isInternetReachable } = useNetwork();
   const { setUser, setToken } = useAuth();
   const router = useRouter();
   const [email, setEmail] = useState("admin@company.com");
@@ -56,7 +59,9 @@ export default function LoginScreen() {
       const detail = ax?.response?.data?.detail;
       let text2: string;
       if (!ax?.response) {
-        text2 = t("loginNetworkError");
+        text2 = formatApiError(err, t, {
+          reachability: { isConnected, isInternetReachable },
+        }).message;
       } else if (status === 401 || String(detail).toLowerCase().includes("invalid credentials")) {
         text2 = t("loginInvalidCredentials");
         if (__DEV__) {
@@ -66,6 +71,9 @@ export default function LoginScreen() {
         text2 = detail != null ? String(detail) : t("loginInvalidCredentials");
       }
       setBannerError(text2);
+      if (__DEV__) {
+        console.warn("[login] failed", { hasResponse: !!ax?.response, status, detail });
+      }
       Toast.show({ type: "error", text1: t("error"), text2 });
     } finally {
       setLoading(false);
@@ -125,6 +133,14 @@ export default function LoginScreen() {
           </FormField>
 
           <PrimaryButton title={t("login")} onPress={() => void handleLogin()} loading={loading} icon="log-in-outline" />
+
+          {bannerError ? (
+            <GhostButton
+              title={t("retry")}
+              onPress={() => void handleLogin()}
+              disabled={loading}
+            />
+          ) : null}
 
           <GhostButton title={t("register")} onPress={() => router.push("/register")} disabled={loading} />
         </Card>

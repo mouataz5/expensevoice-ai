@@ -1,5 +1,8 @@
 import type { AxiosError } from "axios";
 
+import type { DeviceReachabilityHint } from "./networkErrors";
+import { isAxiosTimeout, isDeviceOffline } from "./networkErrors";
+
 type Detail = string | Record<string, unknown>[] | Record<string, unknown> | undefined;
 
 function detailToString(detail: Detail): string | null {
@@ -18,17 +21,32 @@ function detailToString(detail: Detail): string | null {
   return String(detail);
 }
 
-/** User-facing API error message + optional hint (e.g. retry network). */
+export type FormatApiErrorContext = {
+  /** Indique si l’OS signale l’absence de connexion (expo-network). */
+  reachability?: DeviceReachabilityHint;
+};
+
+/**
+ * Message utilisateur + indice optionnel.
+ * Erreurs sans `response` : hors ligne vs timeout vs serveur injoignable.
+ */
 export function formatApiError(
   err: unknown,
-  t: (key: string) => string
+  t: (key: string) => string,
+  ctx?: FormatApiErrorContext
 ): { message: string; hint?: string } {
   const ax = err as AxiosError<{ detail?: Detail }>;
   const status = ax?.response?.status;
   const detailStr = detailToString(ax?.response?.data?.detail);
 
   if (!ax?.response) {
-    return { message: t("loginNetworkError"), hint: t("errorHintNetwork") };
+    if (ctx?.reachability && isDeviceOffline(ctx.reachability)) {
+      return { message: t("errorNetworkOffline"), hint: t("errorHintNetwork") };
+    }
+    if (isAxiosTimeout(err)) {
+      return { message: t("errorServerTimeout"), hint: t("retry") };
+    }
+    return { message: t("errorServerUnreachable"), hint: t("errorHintNetwork") };
   }
   if (status === 401) {
     return { message: t("errorUnauthorized"), hint: t("errorHintReauth") };

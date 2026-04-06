@@ -10,6 +10,7 @@ from app.schemas.invoice_pipeline import (
     InvoiceValidationResult,
 )
 from app.services.invoice_extraction import normalize_extracted_invoice_dict
+from app.services.invoice_user_messages import user_warnings_for_stored_invoice
 
 
 def draft_to_legacy_extracted(draft: InvoiceExtractionDraft) -> dict[str, Any]:
@@ -28,11 +29,23 @@ def draft_to_legacy_extracted(draft: InvoiceExtractionDraft) -> dict[str, Any]:
     tax = float(draft.tax_amount or 0)
     stamp = float(draft.stamp_tax or 0)
     ttc = float(draft.total_amount or 0)
+    cli_tax = draft.client_tax_id or ""
+    cli_addr = (draft.client_address or draft.client_city or "") or ""
     return {
+        "document_type": draft.document_type or "invoice",
         "supplier_name": draft.supplier_name or "",
+        "supplier_full_name": draft.supplier_full_name or "",
+        "supplier_phone": draft.supplier_phone or "",
+        "supplier_address": draft.supplier_address or "",
+        "supplier_tax_number": draft.supplier_tax_id or "",
         "invoice_number": draft.invoice_number or "",
         "invoice_date": draft.invoice_date or "",
         "currency": cur,
+        "tax_rate_percent": draft.tax_rate_percent,
+        "client_name": draft.client_name or "",
+        "client_tax_id": cli_tax,
+        "client_cin": cli_tax,
+        "client_address": cli_addr,
         "items": items,
         "subtotal_htva": sub,
         "tax_amount": tax,
@@ -92,4 +105,6 @@ def build_stored_invoice_json(
     if extraction_error:
         out["extraction_error"] = extraction_error
     out["confidence"] = float(validation.global_confidence or 0.0)
-    return normalize_extracted_invoice_dict(out)
+    out = normalize_extracted_invoice_dict(out)
+    out["user_warnings"] = user_warnings_for_stored_invoice(out)
+    return out

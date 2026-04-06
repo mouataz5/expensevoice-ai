@@ -47,7 +47,12 @@ class InvoiceExtractionDraft(BaseModel):
     invoice_date: str | None = None  # YYYY-MM-DD ou null
     payment_due_date: str | None = None
     client_tax_id: str | None = None
+    client_city: str | None = None
     supplier_tax_id: str | None = None
+    supplier_phone: str | None = None
+    supplier_address: str | None = None
+    client_address: str | None = None
+    tax_rate_percent: float | None = None
     currency: str | None = None
     items: list[InvoiceLineDraft] = Field(default_factory=list)
     subtotal_amount: float | None = None
@@ -107,6 +112,13 @@ class InvoiceExtractionDebug(BaseModel):
     llm_raw_response_full: str | None = None
     final_json_text: str | None = None
     post_corrections: dict[str, Any] | None = None
+    heuristic_snapshot_excerpt: str | None = None
+    zero_value_fixes_excerpt: str | None = None
+    llm_draft_excerpt: str | None = None
+    merged_draft_excerpt: str | None = None
+    field_provenance: dict[str, str] | None = None
+    # Debug extraction tables Surya (colonnes détectées, lignes, corrections) — présent si debug actif
+    surya_table_extraction: dict[str, Any] | None = None
 
 
 class InvoiceExtractionResponse(BaseModel):

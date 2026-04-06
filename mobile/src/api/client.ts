@@ -1,20 +1,32 @@
 import axios, { AxiosError } from "axios";
+import { Platform } from "react-native";
+import { getApiBaseUrl, getApiConfigLabel } from "./resolveApiUrl";
 import { getStoredToken, clearStoredToken } from "../lib/secure-store";
-import { notifyApiReachable, notifyApiUnreachable } from "../lib/networkStatus";
-import { resolveApiOrigin } from "./resolveApiUrl";
 
-const apiOrigin = resolveApiOrigin();
-if (__DEV__) {
-  // Aide au diagnostic : même base que le backend Docker (:8000)
-  console.log(`[api] EXPO_PUBLIC_API_URL=${process.env.EXPO_PUBLIC_API_URL ?? "(auto)"} → ${apiOrigin}`);
+const DEFAULT_PORT = 8000;
+
+const apiOrigin = getApiBaseUrl();
+const effectiveOrigin =
+  apiOrigin ||
+  (__DEV__ ? `http://localhost:${DEFAULT_PORT}` : null);
+
+if (!__DEV__ && !apiOrigin) {
+  console.error(
+    "[api] No EXPO_PUBLIC_API_URL — production/preview builds must define it (HTTPS, ngrok, or public API).",
+    getApiConfigLabel()
+  );
 }
 
-const baseURL = `${apiOrigin.replace(/\/?$/, "")}/api/v1`;
+const baseURL = `${(effectiveOrigin ?? `http://127.0.0.1:9`).replace(/\/+$/, "")}/api/v1`;
+
+if (__DEV__) {
+  console.log(`[api] base ${baseURL} (${getApiConfigLabel()})`);
+}
 
 export const api = axios.create({
   baseURL,
   headers: { "Content-Type": "application/json" },
-  timeout: 30000,
+  timeout: 10_000,
 });
 
 /** Token set right after login so the very next request (getMe) uses it before storage is read. */
@@ -36,17 +48,21 @@ api.interceptors.request.use(async (config) => {
   return config;
 });
 
-/** On 401, clear token so auth context redirects to login. Track reachability for offline UX. */
+/** On 401, clear token so auth context redirects to login. */
 api.interceptors.response.use(
-  (res) => {
-    notifyApiReachable();
-    return res;
-  },
+  (res) => res,
   async (err: AxiosError) => {
-    if (err.response == null) {
-      notifyApiUnreachable();
-    } else {
-      notifyApiReachable();
+    if (__DEV__) {
+      console.warn("[api] request failed", {
+        platform: Platform.OS,
+        baseURL: api.defaults.baseURL,
+        url: err.config?.url,
+        method: err.config?.method,
+        code: err.code,
+        message: err.message,
+        hasResponse: !!err.response,
+        status: err.response?.status,
+      });
     }
     if (err.response?.status === 401) {
       pendingToken = null;

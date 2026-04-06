@@ -75,7 +75,9 @@ export async function extractInvoiceSync(
   } as unknown as Blob);
   formData.append("transaction_type", transactionType);
   formData.append("debug", debug ? "true" : "false");
-  const { data } = await api.post<Record<string, unknown>>("/invoices/extract", formData);
+  const { data } = await api.post<Record<string, unknown>>("/invoices/extract", formData, {
+    timeout: 120_000,
+  });
   return data;
 }
 
@@ -92,7 +94,9 @@ export async function scanInvoice(
   } as unknown as Blob);
   formData.append("transaction_type", transactionType);
 
-  const { data } = await api.post<{ invoice_id: string; status: string }>("/invoices/scan", formData);
+  const { data } = await api.post<{ invoice_id: string; status: string }>("/invoices/scan", formData, {
+    timeout: 120_000,
+  });
   return data;
 }
 

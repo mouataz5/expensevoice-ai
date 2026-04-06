@@ -11,6 +11,7 @@ from app.schemas.invoice_pipeline import (
     InvoiceValidationResult,
     OCRResult,
 )
+from app.utils.money import to_float_safe as _tf
 
 _OCR_INVOICE_HINTS = (
     "FACTURE",
@@ -101,6 +102,11 @@ def compute_global_confidence(
         base = min(1.0, base * 1.05)
     elif validation.is_coherent_lines is False:
         base *= 0.89
+
+    if draft.items and all(
+        (_tf(it.quantity) or 0) > 0 and (_tf(it.line_subtotal) or 0) > 0 for it in draft.items
+    ):
+        base = min(1.0, base * 1.035)
 
     missing = validation.missing_fields or []
     n_crit = sum(1 for m in missing if m in _CRITICAL_MISSING)

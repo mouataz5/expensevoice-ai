@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Any
 
 from app.schemas.invoice_pipeline import InvoiceExtractionDraft, InvoiceLineDraft
+from app.utils.money import to_float_safe
 from app.utils.dates import is_valid_iso_date, parse_date_to_iso
 
 _FOOD_VOLAILLE_CTX = re.compile(
@@ -26,6 +27,7 @@ _OCR_WORD_FIXES_GENERAL: tuple[tuple[str, str], ...] = (
     (r"\bchaiir\b", "chair"),
     (r"\b0euf\b", "œuf"),
     (r"\boeuf\b", "œuf"),
+    (r"(?i)\bate\b(?=\s+chair)", "Poussin"),
 )
 
 
@@ -187,3 +189,42 @@ def post_correct_invoice_draft(
         d = d.model_copy(update={"items": new_items})
 
     return d, corrections
+
+
+def post_process_invoice(
+    draft: InvoiceExtractionDraft,
+    ocr_context: str = "",
+) -> tuple[InvoiceExtractionDraft, dict[str, Any]]:
+    """
+    Post-traitement métier après corrections texte/dates : arithmétique des lignes,
+    suppression de lignes vides numériquement, devise depuis OCR si manquante.
+    """
+    from app.services.invoice_heuristics import finalize_draft_line_math
+    from app.services.ocr_text_normalization import detect_currency_hint
+
+    journal: dict[str, Any] = {"removed_empty_lines": 0, "currency_hint": None}
+    d = finalize_draft_line_math(draft.model_copy(deep=True))
+
+    cleaned: list[InvoiceLineDraft] = []
+    for ln in d.items or []:
+        ln2 = ln.model_copy()
+        q = to_float_safe(ln2.quantity) or 0.0
+        pu = to_float_safe(ln2.unit_price) or 0.0
+        st = to_float_safe(ln2.line_subtotal) or 0.0
+        has_text = bool((ln2.description or "").strip() or (ln2.details or "").strip())
+        if not has_text and q <= 0 and pu <= 0 and st <= 0:
+            journal["removed_empty_lines"] += 1
+            continue
+        if q > 1e9 or pu > 1e12 or st > 1e12:
+            continue
+        cleaned.append(ln2)
+
+    d = d.model_copy(update={"items": cleaned})
+
+    if not (d.currency or "").strip():
+        hint = detect_currency_hint(ocr_context)
+        if hint:
+            d = d.model_copy(update={"currency": hint})
+            journal["currency_hint"] = hint
+
+    return d, journal

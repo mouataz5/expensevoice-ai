@@ -14,6 +14,7 @@ from typing import Any
 import httpx
 
 from app.schemas.invoice_pipeline import InvoiceExtractionDraft, InvoiceLineDraft
+from app.services.invoice_heuristics import heuristic_invoice_from_ocr
 
 logger = logging.getLogger(__name__)
 
@@ -21,22 +22,33 @@ INVOICE_GLOBAL_SYSTEM_PROMPT = """\
 Tu es un extracteur de factures pour documents scannés (OCR bruité).
 Langues: français prioritaire; arabe/anglais possibles. Contexte Tunisie fréquent.
 
-Tu reçois du texte OCR (peut contenir erreurs). Tu dois produire UN SEUL objet JSON valide, sans markdown ni ```.
+Tu reçois du texte OCR (peut contenir erreurs). Tu dois produire UN SEUL objet JSON valide, sans markdown ni ``` (JSON STRICT uniquement).
+
+Ordre de travail : (1) en-tête fournisseur, N° facture, dates, (2) bloc SOCIETE / client, MF, ville si visible, (3) lignes tableau articles, (4) sous-total, TVA, timbre, TTC, paiements reçus, reste dû. Si "TND" ou format millimes TN → currency = TND.
 
 Règles strictes:
 - Ne JAMAIS inventer de montants, dates ou noms non présents dans le texte. Si doute -> null + warning court dans "warnings".
+- Ne JAMAIS mettre quantity, unit_price ou line_subtotal à 0 lorsque le texte OCR montre des nombres non nuls sur cette ligne de tableau : reproduis les valeurs lues ou mets null si illisible — 0 faux est interdit.
+- Extrais TOUTES les lignes d'articles du tableau (désignation + colonnes qty / prix d'unité / total ligne) dans l'ordre du document.
+- Colonnes typiques à identifier: designation (description), quantity (quantité), unit_price (PU / P.U. / prix unitaire), line_subtotal (total ligne / montant). S'adapter aux en-têtes (Qté, DESIGNATION, P.U, TOT, etc.).
+- Cohérence obligatoire: si quantity et unit_price sont connus -> line_subtotal = round(quantity * unit_price, 3) sauf si le texte montre un total ligne légèrement différent (dans ce cas privilégier le total OCR et indiquer un warning).
+- Si line_subtotal et quantity sont connus mais pas unit_price -> unit_price = line_subtotal / quantity (nombre décimal raisonnable).
+- Si line_subtotal et unit_price sont connus mais pas quantity -> quantity = line_subtotal / unit_price.
+- Si seul un total global (TTC) est lisible mais pas les lignes du tableau -> laisse items vide ou nulls avec warning; ne fabrique pas de lignes inventées.
 - Dates: invoice_date et payment_due_date en ISO YYYY-MM-DD uniquement si le jour/mois/année est CALENDRIER VALIDE (jour 1–31, mois 1–12). Ne jamais sortir un jour > 31 ou un mois > 12. Si l'OCR montre un jour impossible (ex. 36/01/2026), choisir la correction la plus probable proche dans le texte (souvent 16 pour 36) et l'indiquer dans "warnings".
 - Priorité pour invoice_date: la valeur sur la même ligne ou immédiatement après "DATE DE LA FACTURE", "DATE FACTURE", "DATE DE FACTURE" — pas une autre date (échéance) si ambigu.
 - supplier_name: en-tête / émetteur (haut de page, avant bloc client), pas la ligne sous SOCIETE.
 - invoice_number: la valeur après "N° FACTURE", "N FACTURE", "FACTURE N°", "No FACTURE" (référence type FA005/2026).
 - client_name: obligatoire si présent dans le texte — typiquement la ligne juste après un libellé "SOCIETE :" ou "SOCIETE" seul sur une ligne, ou après "CLIENT" / "DESTINATAIRE".
 - Corrections OCR lexicales (ne pas inventer un produit absent): en contexte volaille/alimentaire, "chat" isolé comme nom de produit -> probablement "chair" (ex. poussin chair). Autres confusions: mots très courts proches du libellé table (ARTICLE, DESIGNATION).
-- Montants dans le JSON: nombres décimaux avec point (ex: 15575.0 pour quinze mille cinq cent soixante-quinze dinars et zéro millime). Pas de chaînes pour les montants.
+- Montants dans le JSON: nombres décimaux avec point (ex: 15575.0 pour quinze mille cinq cent soixante-quinze dinars et zéro millime). Jamais de chaînes pour les montants; pas d'expressions arithmétiques dans le JSON.
 - Le texte peut déjà avoir des montants normalisés type 15575.000 (point = décimal millimes TND).
+- document_type: \"invoice\" par défaut ; \"quote\" (ou \"devis\") si le texte contient DEVIS, PROPOSITION COMMERCIALE, QUOTE, etc.
+- Extraire supplier_phone (téléphone émetteur), supplier_address (adresse ou ville émetteur), tax_rate_percent (ex. 19 si \"TVA 19 %\").
 - Repère les libellés français / tunisiens: "N° FACTURE", "DATE DE LA FACTURE", "DELAIS DE PAIEMENT", "SOUS-TOTAL", "TOTAL TTC", "TTC", "HTVA", "TVA", "TIMBRE", "DROIT DE TIMBRE", "RESTE DU", "NET A PAYER", "CONCERNE", "M.F", "MATRICULE FISCAL".
 - transaction_type = buy (achat): supplier_name = vendeur / émetteur de la facture; client_name = acheteur facturé (souvent STE ... ABBES ...). Ne pas mettre le client dans supplier_name.
 - transaction_type = sell (vente): inverse logique si le texte le permet; sinon null + warning.
-- Items: quantity, unit_price, line_subtotal doivent être cohérents (qté × PU ≈ sous-total ligne) avec les nombres visibles sur la ligne ou la ligne suivante.
+- total_amount: doit refléter le TTC / net à payer visible (pas 0 si un total est clairement indiqué dans l'OCR).
 
 Schéma JSON attendu (toutes les clés doivent exister; utiliser null si inconnu):
 {
@@ -48,7 +60,12 @@ Schéma JSON attendu (toutes les clés doivent exister; utiliser null si inconnu
   "invoice_date": null,
   "payment_due_date": null,
   "client_tax_id": null,
+  "client_city": null,
+  "client_address": null,
   "supplier_tax_id": null,
+  "supplier_phone": null,
+  "supplier_address": null,
+  "tax_rate_percent": null,
   "currency": null,
   "items": [{"description": null, "details": null, "quantity": null, "unit_price": null, "line_subtotal": null}],
   "subtotal_amount": null,
@@ -178,6 +195,22 @@ async def extract_invoice_with_llm(
             continue
 
     logger.warning("All LLM providers exhausted: %s", notes[:5])
+    blob = (normalized_ocr_text or "").strip()
+    if blob:
+        try:
+            hd = heuristic_invoice_from_ocr(blob, transaction_type)
+            if hd.get("items") or (hd.get("total_ttc") or 0) > 0:
+                d = heuristic_to_global_draft(hd)
+                d.warnings = list(
+                    {
+                        *(d.warnings or []),
+                        "llm_exhausted_heuristic_fallback",
+                        *(notes[:5]),
+                    }
+                )
+                return d, last_raw
+        except Exception as e:
+            logger.warning("Heuristic fallback after LLM failure: %s", str(e)[:200])
     d = _fallback_draft()
     d.warnings = list({*(d.warnings or []), *(notes[:5])})
     return d, last_raw
@@ -282,32 +315,44 @@ def heuristic_to_global_draft(heur: dict[str, Any]) -> InvoiceExtractionDraft:
         items.append(
             InvoiceLineDraft(
                 description=it.get("designation"),
-                details=None,
+                details=it.get("details"),
                 quantity=it.get("quantity"),
                 unit_price=it.get("unit_price"),
                 line_subtotal=it.get("line_total"),
             )
         )
+    sup_full = heur.get("supplier_full_name") or heur.get("supplier_name")
     return InvoiceExtractionDraft(
+        document_type=heur.get("document_type") or "invoice",
         supplier_name=heur.get("supplier_name"),
-        supplier_full_name=heur.get("supplier_name"),
+        supplier_full_name=sup_full,
+        supplier_tax_id=heur.get("supplier_tax_id"),
+        supplier_phone=heur.get("supplier_phone"),
+        supplier_address=heur.get("supplier_address"),
         client_name=heur.get("client_name"),
+        client_tax_id=heur.get("client_tax_id"),
+        client_city=heur.get("client_city"),
+        client_address=heur.get("client_address"),
+        tax_rate_percent=heur.get("tax_rate_percent"),
         invoice_number=heur.get("invoice_number"),
         invoice_date=heur.get("invoice_date"),
+        payment_due_date=heur.get("payment_due_date"),
         currency=heur.get("currency") or "TND",
         items=items,
         subtotal_amount=heur.get("subtotal_htva"),
         tax_amount=heur.get("tax_amount"),
         stamp_tax=heur.get("stamp_duty"),
         total_amount=heur.get("total_ttc"),
+        amount_paid=heur.get("amount_paid"),
+        remaining_due=heur.get("remaining_due"),
         warnings=[],
         missing_fields=[],
-        global_confidence=0.52,
+        global_confidence=0.58,
         field_confidence={
-            "supplier_name": 0.55,
-            "invoice_number": 0.55,
-            "invoice_date": 0.55,
-            "total_amount": 0.55,
-            "client_name": 0.45,
+            "supplier_name": 0.58,
+            "invoice_number": 0.58,
+            "invoice_date": 0.58,
+            "total_amount": 0.58,
+            "client_name": 0.52,
         },
     )

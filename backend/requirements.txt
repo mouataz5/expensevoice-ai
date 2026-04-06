@@ -24,3 +24,8 @@ easyocr
 #   CPU: pip install paddlepaddle && pip install paddleocr
 #   See https://www.paddlepaddle.org.cn/install/quick
 paddleocr>=2.7.0.3
+# Surya OCR (optionnel, PyTorch) — OCR + layout + tables + ordre de lecture
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+#   pip install surya-ocr
+# Déploiement : OCR_PROVIDER=surya ou surya,paddleocr,tesseract — voir ocr_orchestrator.py
+# surya-ocr>=0.17.0

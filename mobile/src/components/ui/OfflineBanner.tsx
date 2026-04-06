@@ -12,10 +12,10 @@ type Props = {
 };
 
 export function OfflineBanner({ message, actionLabel, onRetry }: Props) {
-  const { isOnline } = useNetwork();
+  const { showOfflineBanner } = useNetwork();
   const insets = useSafeAreaInsets();
 
-  if (isOnline) return null;
+  if (!showOfflineBanner) return null;
 
   return (
     <View style={[styles.wrap, { paddingTop: Math.max(insets.top, space.sm) }]}>

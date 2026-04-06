@@ -44,6 +44,38 @@ PAGE_W, PAGE_H = A4
 MARGIN_H = 18 * mm
 MARGIN_V = 18 * mm
 
+
+def _pdf_footer(canvas, doc) -> None:
+    canvas.saveState()
+    canvas.setFont("Helvetica", 7)
+    canvas.setFillColor(C_GREY)
+    canvas.drawCentredString(
+        PAGE_W / 2,
+        10 * mm,
+        "Abes AgroTech — rapport confidentiel — ne contient pas le texte brut OCR",
+    )
+    canvas.drawRightString(PAGE_W - MARGIN_H, 10 * mm, f"Page {doc.page}")
+    canvas.restoreState()
+
+
+def _report_title(document_type: str) -> str:
+    dt = (document_type or "invoice").lower().strip()
+    if dt in ("quote", "devis", "quotation"):
+        return "Rapport de devis"
+    return "Rapport de document fiscal"
+
+
+def _extraction_status_badge(extracted: dict) -> str:
+    try:
+        c = float(extracted.get("confidence") or 0)
+    except (TypeError, ValueError):
+        c = 0.0
+    if c >= 0.75:
+        return "Extraction : fiable"
+    if c >= 0.45:
+        return "Extraction : à contrôler"
+    return "Extraction : faible confiance"
+
 # ─── Arabic font (optional) ───────────────────────────────────────────────────
 _ARABIC_FONT = "ArabicFont"
 _arabic_loaded = False
@@ -236,6 +268,30 @@ def _build_styles(arabic_available: bool) -> dict:
             alignment=TA_CENTER,
             spaceAfter=4 * mm,
         ),
+        "summary": ps(
+            "summary",
+            fontName=latin,
+            fontSize=9,
+            textColor=C_BLACK,
+            alignment=TA_LEFT,
+            spaceAfter=3 * mm,
+        ),
+        "warn_title": ps(
+            "warn_title",
+            fontName=latin_bold,
+            fontSize=9,
+            textColor=C_GREEN_DARK,
+            alignment=TA_LEFT,
+            spaceAfter=2 * mm,
+        ),
+        "warn_item": ps(
+            "warn_item",
+            fontName=latin,
+            fontSize=8,
+            textColor=C_BLACK,
+            alignment=TA_LEFT,
+            leftIndent=6,
+        ),
     }
 
 
@@ -283,9 +339,9 @@ def generate_invoice_report_pdf(
         leftMargin=MARGIN_H,
         rightMargin=MARGIN_H,
         topMargin=MARGIN_V,
-        bottomMargin=MARGIN_V,
-        title="Rapport Facture — Abes AgroTech",
-        author="Abes AgroTech System",
+        bottomMargin=MARGIN_V + 12 * mm,
+        title="Rapport document — Abes AgroTech",
+        author="Abes AgroTech",
     )
 
     story = []
@@ -294,9 +350,11 @@ def generate_invoice_report_pdf(
     # ══════════════════════════════════════════════════════
     # HEADER BLOCK
     # ══════════════════════════════════════════════════════
+    doc_type = _safe(extracted.get("document_type")) or "invoice"
+    rep_title = _report_title(doc_type)
     header_data = [
-        [Paragraph("Abes AgroTech — نظام عبّاس", styles["header_title"])],
-        [Paragraph("Rapport de Facture / تقرير الفاتورة", styles["header_sub"])],
+        [Paragraph("Abes AgroTech", styles["header_title"])],
+        [Paragraph(rep_title + " / تقرير المستند", styles["header_sub"])],
     ]
     header_table = Table(header_data, colWidths=[content_w])
     header_table.setStyle(TableStyle([
@@ -318,25 +376,44 @@ def generate_invoice_report_pdf(
     scan_date = _fmt_date(created_at_str)
     inv_number = _safe(extracted.get("invoice_number")) or "—"
     inv_date = _fmt_date(_safe(extracted.get("invoice_date")) or None)
+    doc_label = "N° devis / réf." if doc_type.lower() in ("quote", "devis", "quotation") else "N° document"
+    type_doc_fr = (
+        "Devis"
+        if doc_type.lower() in ("quote", "devis", "quotation")
+        else "Facture / document"
+    )
 
     info_data = [
         [
-            Paragraph("Employé (موظف)", styles["label"]),
+            Paragraph("Collaborateur", styles["label"]),
             Paragraph(employee_email or "—", styles["value"]),
-            Paragraph("N° Facture", styles["label"]),
+            Paragraph(doc_label, styles["label"]),
             Paragraph(inv_number, styles["value_bold"]),
         ],
         [
-            Paragraph("Date de scan", styles["label"]),
+            Paragraph("Date de numérisation", styles["label"]),
             Paragraph(scan_date, styles["value"]),
-            Paragraph("Date Facture", styles["label"]),
+            Paragraph("Date document", styles["label"]),
             Paragraph(inv_date, styles["value_bold"]),
         ],
         [
             Paragraph("Type de transaction", styles["label"]),
             Paragraph(_transaction_label(transaction_type), styles["value_bold"]),
-            Paragraph("", styles["label"]),
-            Paragraph("", styles["value"]),
+            Paragraph("Nature du document", styles["label"]),
+            Paragraph(type_doc_fr, styles["value_bold"]),
+        ],
+        [
+            Paragraph("Statut", styles["label"]),
+            Paragraph(_extraction_status_badge(extracted), styles["value_bold"]),
+            Paragraph("Confiance globale", styles["label"]),
+            Paragraph(
+                (
+                    f"{float(extracted.get('confidence') or 0) * 100:.0f} %"
+                    if extracted.get("confidence") is not None
+                    else "—"
+                ),
+                styles["value"],
+            ),
         ],
     ]
     col_w = content_w / 4
@@ -353,18 +430,29 @@ def generate_invoice_report_pdf(
         ("LINEAFTER", (1, 0), (1, -1), 1, C_GREEN_BORDER),
     ]))
     story.append(info_table)
-    story.append(Spacer(1, 4 * mm))
+    story.append(Spacer(1, 3 * mm))
+
+    cur_sym = "TND" if str(extracted.get("currency") or "TND").upper() == "TND" else _safe(extracted.get("currency"))
+    story.append(
+        Paragraph(
+            f"<b>Résumé</b> — Les montants sont affichés en {cur_sym}. "
+            "Ce rapport présente une synthèse structurée ; le texte OCR brut n’est pas reproduit ici.",
+            styles["summary"],
+        )
+    )
+    story.append(Spacer(1, 2 * mm))
 
     # ══════════════════════════════════════════════════════
     # FOURNISSEUR / CLIENT SIDE-BY-SIDE
     # ══════════════════════════════════════════════════════
     supplier_name = _safe(extracted.get("supplier_name")) or "—"
-    sup_tax = _safe(extracted.get("supplier_tax_number")) or "—"
+    supplier_fn = _safe(extracted.get("supplier_full_name")) or supplier_name
+    sup_tax = _safe(extracted.get("supplier_tax_number")) or _safe(extracted.get("supplier_tax_id")) or "—"
     sup_addr = _safe(extracted.get("supplier_address")) or "—"
     sup_tel = _safe(extracted.get("supplier_phone")) or "—"
 
     client_name = _safe(extracted.get("client_name")) or "—"
-    client_cin = _safe(extracted.get("client_cin")) or "—"
+    client_cin = _safe(extracted.get("client_tax_id")) or _safe(extracted.get("client_cin")) or "—"
     client_addr = _safe(extracted.get("client_address")) or "—"
 
     def _info_cell(rows: list[tuple[str, str]]) -> Table:
@@ -379,14 +467,15 @@ def generate_invoice_report_pdf(
         return t
 
     sup_cell = _info_cell([
-        ("Raison sociale:", supplier_name),
+        ("Nom commercial:", supplier_name),
+        ("Raison sociale / enseigne:", supplier_fn),
         ("MF / RNE:", sup_tax),
-        ("Adresse:", sup_addr),
-        ("Tél:", sup_tel),
+        ("Adresse / ville:", sup_addr),
+        ("Téléphone:", sup_tel),
     ])
     cli_cell = _info_cell([
         ("Client:", client_name),
-        ("MF / CIN:", client_cin),
+        ("Matricule fiscal:", client_cin),
         ("Adresse:", client_addr),
         ("", ""),
     ])
@@ -537,9 +626,20 @@ def generate_invoice_report_pdf(
         except (TypeError, ValueError):
             ttc = None
 
+    ext = extracted.get("extraction") if isinstance(extracted.get("extraction"), dict) else {}
+    tax_rate = extracted.get("tax_rate_percent")
+    if tax_rate is None:
+        tax_rate = ext.get("tax_rate_percent")
+    tva_lbl = "TVA:"
+    try:
+        if tax_rate is not None and float(tax_rate) > 0:
+            tva_lbl = f"TVA ({float(tax_rate):g} %):"
+    except (TypeError, ValueError):
+        pass
+
     totals_data = [
-        [Paragraph("HTVA:", styles["total_label"]), Paragraph(_fmt_tnd(htva), styles["total_value"])],
-        [Paragraph("TVA:", styles["total_label"]), Paragraph(_fmt_tnd(tva), styles["total_value"])],
+        [Paragraph("Total HT / HTVA:", styles["total_label"]), Paragraph(_fmt_tnd(htva), styles["total_value"])],
+        [Paragraph(tva_lbl, styles["total_label"]), Paragraph(_fmt_tnd(tva), styles["total_value"])],
         [Paragraph("Timbre:", styles["total_label"]), Paragraph(_fmt_tnd(timbre), styles["total_value"])],
         [Paragraph("Total TTC:", styles["ttc_label"]), Paragraph(_fmt_tnd(ttc), styles["ttc_value"])],
     ]
@@ -574,7 +674,14 @@ def generate_invoice_report_pdf(
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
     ]))
     story.append(totals_wrapper)
-    story.append(Spacer(1, 6 * mm))
+    story.append(Spacer(1, 5 * mm))
+
+    user_warn = list(extracted.get("user_warnings") or [])
+    if user_warn:
+        story.append(Paragraph("Points d’attention", styles["warn_title"]))
+        for uw in user_warn[:10]:
+            story.append(Paragraph(f"• {_safe(uw)}", styles["warn_item"]))
+        story.append(Spacer(1, 4 * mm))
 
     # ══════════════════════════════════════════════════════
     # FOOTER
@@ -582,8 +689,8 @@ def generate_invoice_report_pdf(
     story.append(HRFlowable(width="100%", thickness=0.5, color=C_GREEN_BORDER))
     story.append(Spacer(1, 2 * mm))
     story.append(Paragraph(
-        "Ce rapport est généré automatiquement par le système Abes AgroTech et soumis à validation administrative. "
-        "/ هذا التقرير تم إنشاؤه آليًا وهو قابل للمراجعة من طرف الإدارة.",
+        "Document généré par Abes AgroTech. Les montants proviennent de l’analyse du scan ; "
+        "une validation métier reste recommandée avant toute décision financière.",
         styles["footer"],
     ))
 
@@ -592,7 +699,7 @@ def generate_invoice_report_pdf(
     # ══════════════════════════════════════════════════════
     if image_path and Path(image_path).is_file():
         story.append(PageBreak())
-        story.append(Paragraph("Copie de la Facture Originale / صورة الفاتورة الأصلية", styles["page2_title"]))
+        story.append(Paragraph("Annexe — copie du document source (scan)", styles["page2_title"]))
         story.append(HRFlowable(width="100%", thickness=1, color=C_GREEN_MID))
         story.append(Spacer(1, 4 * mm))
         try:
@@ -616,5 +723,5 @@ def generate_invoice_report_pdf(
     # ══════════════════════════════════════════════════════
     # BUILD
     # ══════════════════════════════════════════════════════
-    doc.build(story)
+    doc.build(story, onFirstPage=_pdf_footer, onLaterPages=_pdf_footer)
     logger.info("Invoice PDF generated: %s", pdf_output_path)
