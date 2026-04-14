@@ -6,6 +6,8 @@ remplis et cohérents (factures TN/FR typiques), sans inventer de garantie absol
 """
 from __future__ import annotations
 
+import re
+
 from app.schemas.invoice_pipeline import (
     InvoiceExtractionDraft,
     InvoiceValidationResult,
@@ -42,6 +44,24 @@ _OCR_INVOICE_HINTS = (
 _CRITICAL_MISSING = frozenset(
     {"supplier_name", "total_amount", "invoice_number", "invoice_date"}
 )
+
+
+def _invoice_number_seen_in_ocr(invoice_number: str | None, raw_text: str) -> bool:
+    """Vrai si le numéro du brouillon apparaît dans l’OCR (tolère espaces / ponctuation)."""
+    inv = (invoice_number or "").strip()
+    if len(inv) < 3:
+        return False
+    raw = raw_text or ""
+    if not raw:
+        return False
+    inv_u, raw_u = inv.upper(), raw.upper()
+    if inv_u in raw_u:
+        return True
+    inv_alnum = re.sub(r"[^A-Z0-9]", "", inv_u)
+    if len(inv_alnum) < 4:
+        return False
+    raw_alnum = re.sub(r"[^A-Z0-9]", "", raw_u)
+    return inv_alnum in raw_alnum
 
 
 def ocr_quality_from_result(ocr: OCRResult) -> float:
@@ -134,9 +154,13 @@ def compute_global_confidence(
 
     fc = dict(draft.field_confidence or {})
     fc["supplier_name"] = max(fc.get("supplier_name", 0.0), _field(bool((draft.supplier_name or "").strip())))
-    fc["invoice_number"] = max(
-        fc.get("invoice_number", 0.0), _field(bool((draft.invoice_number or "").strip()))
-    )
+    inv_ok = bool((draft.invoice_number or "").strip())
+    inv_in_ocr = inv_ok and _invoice_number_seen_in_ocr(draft.invoice_number, ocr.raw_text or "")
+    inv_fc = _field(inv_ok)
+    if inv_ok and inv_in_ocr:
+        # Bonus net quand le N° est ancré dans l’OCR (évite un score quasi identique si le LLM invente).
+        inv_fc = min(0.99, inv_fc + 0.14)
+    fc["invoice_number"] = max(fc.get("invoice_number", 0.0), inv_fc)
     fc["invoice_date"] = max(fc.get("invoice_date", 0.0), _field(bool((draft.invoice_date or "").strip())))
     fc["total_amount"] = max(
         fc.get("total_amount", 0.0),

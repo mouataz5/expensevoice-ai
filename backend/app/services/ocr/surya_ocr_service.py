@@ -320,7 +320,19 @@ def extract_surya_document(image_path: str) -> OCRResult:
     if not is_surya_available():
         raise RuntimeError("surya-ocr non installé (pip install surya-ocr + PyTorch)")
 
-    img = _open_image(image_path)
+    path_for_models = image_path
+    tmp_preprocess: str | None = None
+    try:
+        from app.services.ocr.image_preprocessing import preprocess_for_table_ocr
+
+        path_for_models = preprocess_for_table_ocr(image_path)
+        if path_for_models != image_path:
+            tmp_preprocess = path_for_models
+    except Exception as e:
+        logger.debug("Surya preprocess skipped: %s", e)
+        path_for_models = image_path
+
+    img = _open_image(path_for_models)
     recognition_predictor, detection_predictor = _recognition_stack()
     predictions = recognition_predictor([img], det_predictor=detection_predictor)
     page = _first_page(predictions)
@@ -378,13 +390,21 @@ def extract_surya_document(image_path: str) -> OCRResult:
         "text_fallback_vertical": raw_simple if raw_simple != raw_text else "",
     }
 
-    return OCRResult(
+    result = OCRResult(
         raw_text=raw_text,
         lines=lines,
         words=words,
         confidence=_mean_conf(line_confs),
         metadata=metadata,
     )
+    if tmp_preprocess:
+        try:
+            import os
+
+            os.unlink(tmp_preprocess)
+        except OSError:
+            pass
+    return result
 
 
 __all__ = [

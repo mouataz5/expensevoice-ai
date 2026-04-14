@@ -131,6 +131,7 @@ async def run_invoice_pipeline_async(
         ocr_for_confidence=ocr,
         debug=debug,
         invoice_id=invoice_id,
+        image_path=image_path,
     )
 
 

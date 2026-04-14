@@ -192,7 +192,7 @@ export default function EmployeeInvoicesScreen() {
             primaryCtaTitle={t("emptyInvoicesCtaPrimary")}
             onPrimaryCta={() => router.push("/(tabs)/scan")}
             secondaryCtaTitle={t("emptyInvoicesCtaSecondary")}
-            onSecondaryCta={() => router.push("/(tabs)/voice-studio")}
+            onSecondaryCta={() => router.push("/(tabs)/record")}
           />
         }
         refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} />}

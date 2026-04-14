@@ -50,13 +50,6 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
-        name="voice-studio"
-        options={{
-          title: t("voiceStudio"),
-          tabBarIcon: ({ color, size }) => <Ionicons name="mic-circle" size={size} color={color} />,
-        }}
-      />
-      <Tabs.Screen
         name="scan"
         options={{
           title: t("scanInvoice"),
@@ -78,19 +71,15 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
-        name="alerts"
-        options={{
-          title: t("alerts"),
-          tabBarIcon: ({ color, size }) => <Ionicons name="notifications" size={size} color={color} />,
-        }}
-      />
-      <Tabs.Screen
         name="profile"
         options={{
           title: t("profile"),
           tabBarIcon: ({ color, size }) => <Ionicons name="person" size={size} color={color} />,
         }}
       />
+      {/* Hidden screens (accessible via navigation, not in tab bar) */}
+      <Tabs.Screen name="voice-studio" options={{ href: null }} />
+      <Tabs.Screen name="alerts" options={{ href: null }} />
       <Tabs.Screen name="invoice/[id]" options={{ href: null }} />
       <Tabs.Screen name="purchases/[id]" options={{ href: null }} />
     </Tabs>

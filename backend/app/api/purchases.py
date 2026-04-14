@@ -57,16 +57,23 @@ def list_my_purchases(
     return rows
 
 
-@router.get("/all", response_model=list[PurchaseOut])
+@router.get("/all")
 def list_all_purchases(
     db: Session = Depends(get_db),
     _user: User = require_permission(PURCHASES_READ_ALL),
 ):
     rows = (
         db.execute(
-            select(Purchase).where(Purchase.is_deleted == False).order_by(Purchase.created_at.desc())
+            select(Purchase, User.email)
+            .join(User, User.id == Purchase.user_id)
+            .where(Purchase.is_deleted == False)
+            .order_by(Purchase.created_at.desc())
         )
-        .scalars()
         .all()
     )
-    return rows
+    result = []
+    for purchase, email in rows:
+        d = PurchaseOut.model_validate(purchase).model_dump()
+        d["employee_email"] = email
+        result.append(d)
+    return result

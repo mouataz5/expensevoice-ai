@@ -36,15 +36,20 @@ export type PurchaseConfirmResponse = {
   alerts_created?: { type: string; severity: string; message: string }[];
 };
 
-/** Langue Whisper (backend `transcribe_audio`) — alignée sur l’UI. */
-export function sttLanguageFromLocale(locale: Locale): string {
-  if (locale === "ar") return "ar";
-  if (locale === "fr") return "fr";
-  return "en";
+/** Langue Whisper — "auto" lets the model auto-detect the spoken language. */
+export function sttLanguageFromLocale(_locale: Locale): string {
+  return "auto";
 }
 
 export async function listMyPurchases(): Promise<PurchaseOut[]> {
   const { data } = await api.get<PurchaseOut[]>("/purchases/me");
+  return data;
+}
+
+export type PurchaseAllOut = PurchaseOut & { employee_email?: string };
+
+export async function listAllPurchases(): Promise<PurchaseAllOut[]> {
+  const { data } = await api.get<PurchaseAllOut[]>("/purchases/all");
   return data;
 }
 
@@ -69,6 +74,16 @@ export async function fetchPurchaseAlerts(id: string): Promise<PurchaseAlertRow[
 
 export async function extractPurchase(id: string): Promise<{ extracted: Record<string, unknown> }> {
   const { data } = await api.post<{ extracted: Record<string, unknown> }>(`/purchases/${id}/extract`);
+  return data;
+}
+
+export async function approvePurchase(id: string): Promise<{ purchase_id: string; status: string }> {
+  const { data } = await api.post<{ purchase_id: string; status: string }>(`/purchases/${id}/approve`);
+  return data;
+}
+
+export async function rejectPurchase(id: string): Promise<{ purchase_id: string; status: string }> {
+  const { data } = await api.post<{ purchase_id: string; status: string }>(`/purchases/${id}/reject`);
   return data;
 }
 

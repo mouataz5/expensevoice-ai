@@ -211,6 +211,15 @@ def validate_invoice_draft(
     if total is None or total <= 0:
         missing.append("total_amount")
 
+    if any(str(w).lower() == "table_manual_review_required" for w in (draft.warnings or [])):
+        flags.append(
+            ValidationFlag(
+                code="table_manual_review_required",
+                message="Tableau articles incertain: revue manuelle recommandée",
+                severity="warning",
+            )
+        )
+
     skip_lines_subtotal_math = (not coherent_lines) and bool(draft.items)
     for mw in validate_invoice_math(draft):
         if mw in warnings:

@@ -6,12 +6,15 @@ from pathlib import Path
 import pytest
 
 from app.services.invoice_extraction import (
+    _heur_find_invoice_number,
     _parse_amount_token,
     _sanitize_supplier_name,
     heuristic_invoice_from_ocr,
     merge_heuristic_into_extracted,
     reconcile_extracted_invoice_numbers,
 )
+from app.schemas.invoice_pipeline import InvoiceExtractionDraft, InvoiceValidationResult, OCRResult
+from app.services.confidence_scoring import compute_global_confidence
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "invoices"
 
@@ -136,3 +139,35 @@ def test_sell_prefers_client() -> None:
     text = _load("stpa_ocr.txt")
     h = heuristic_invoice_from_ocr(text, "sell")
     assert "ABBES" in (h.get("supplier_name") or "").upper()
+
+
+def test_heur_find_invoice_number_stpa_fac_dash() -> None:
+    text = _load("stpa_ocr.txt")
+    assert _heur_find_invoice_number(text) == "FAC-26004806"
+
+
+def test_heur_find_invoice_number_devis_dv() -> None:
+    ocr = "PROPOSITION COMMERCIALE\nDEVIS N° : DV-2025-042\nClient STE X"
+    assert _heur_find_invoice_number(ocr) == "DV-2025-042"
+
+
+def test_heur_find_invoice_number_ref_line() -> None:
+    ocr = "RÉFÉRENCE : BC-2025-0012\nMontant 100"
+    assert _heur_find_invoice_number(ocr) == "BC-2025-0012"
+
+
+def test_confidence_invoice_number_boost_when_in_ocr() -> None:
+    raw = "Numéro FAC-26004806\nTOTAL TTC 100"
+    ocr = OCRResult(raw_text=raw)
+    draft = InvoiceExtractionDraft(
+        invoice_number="FAC-26004806",
+        supplier_name="X",
+        total_amount=100.0,
+        items=[],
+    )
+    val = InvoiceValidationResult()
+    fc, _g = compute_global_confidence(ocr, draft, val)
+    low_draft = InvoiceExtractionDraft.model_validate({**draft.model_dump(), "invoice_number": "WRONG-999"})
+    fc_bad, _ = compute_global_confidence(ocr, low_draft, val)
+    assert fc["invoice_number"] > fc_bad["invoice_number"]
+    assert fc["invoice_number"] >= fc_bad["invoice_number"] + 0.05

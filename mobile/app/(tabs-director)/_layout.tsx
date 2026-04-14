@@ -50,6 +50,13 @@ export default function DirectorTabsLayout() {
         }}
       />
       <Tabs.Screen
+        name="purchases"
+        options={{
+          title: t("myPurchases"),
+          tabBarIcon: ({ color, size }) => <Ionicons name="cart" size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
         name="alerts"
         options={{
           title: t("alerts"),

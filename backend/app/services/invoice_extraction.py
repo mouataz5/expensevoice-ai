@@ -68,8 +68,10 @@ Amount format: dots group thousands, comma is decimals/millimes (e.g. 15.576,000
 May appear as 15.576.000 (two dot patterns) — treat as 15576.000 in TND context.
 
 === INVOICE DOCUMENT TERMS ===
-N° FACTURE / FACTURE / N FACTURE = invoice number
-BON DE LIVRAISON / BL / LIV- = delivery note number → use as invoice_number
+N° FACTURE / FACTURE / N FACTURE / NUMERO FAC = invoice number
+FAC-NNNNNNNN (e.g. FAC-26004806), FA05/2026, DV-2025-042 (devis) = invoice number
+RÉF. / REF. / N° DEVIS / DEVIS N° = document reference → use as invoice_number when no separate invoice id
+BON DE LIVRAISON / BL / LIV- / BC- = delivery or order ref → use as invoice_number if that is the doc id
 DATE / DATE DE LA FACTURE = invoice date (use this, not MAJ date, not payment date)
 
 === ITEM TABLE COLUMNS ===
@@ -148,10 +150,14 @@ _SUPPLIER_LINE_RE = re.compile(
 )
 _DATE_DM_RE = re.compile(r"\b(\d{1,2})[/.-](\d{1,2})[/.-](20\d{2})\b")
 _INV_NUM_RE = re.compile(
-    r"(?i)(?:n[o°]\s*facture|facture\s*n[o°]|facture|n[o°]|n\.|réf|ref)\s*[:\s]?\s*([A-Z0-9][A-Z0-9\-/]{4,30})"
+    r"(?i)(?:n[o°]\s*facture|facture\s*n[o°]|facture|n[o°]|n\.|réf(?:érence)?|ref(?:erence)?)\s*[:\s]?\s*([A-Z0-9][A-Z0-9\-/]{3,36})"
 )
 _INV_FA_REF_RE = re.compile(r"\b(FA\d{2,8}/\d{4})\b", re.I)
 _INV_BL_REF_RE = re.compile(r"\b([A-Z]{1,4}[\-]?\d{2,10}/\d{4})\b", re.I)
+# Devis / factures TN : formes fréquentes même si l’étiquette « N° facture » manque sur l’OCR.
+_INV_DV_RE = re.compile(r"\b(DV[\-–]\d{4}[\-–]\d{2,5})\b", re.I)
+_INV_FAC_DASH_RE = re.compile(r"\b(FAC[\-–]\d{5,14})\b", re.I)
+_INV_BC_REF_RE = re.compile(r"\b(BC[\-–]\d{4}(?:[\-–]\d{2,6})?)\b", re.I)
 _CLIENT_MF_RE = re.compile(
     r"(?i)\b(\d{5,12}(?:/[A-Z0-9]+)+(?:/\d{3})?)\b",
 )
@@ -162,6 +168,42 @@ _LINE_ITEM_RE = re.compile(
 )
 
 
+def _parse_grouped_millimes_tokens(parts_sp: list[str]) -> float | None:
+    """Espaces ou virgules comme séparateurs de milliers ; dernier bloc = millimes. Pas de '.' ici."""
+    if not parts_sp:
+        return None
+    if (
+        len(parts_sp) >= 3
+        and all(p.isdigit() for p in parts_sp)
+        and len(parts_sp[-1]) == 3
+        and 1 <= len(parts_sp[0]) <= 3
+        and all(len(p) == 3 for p in parts_sp[1:-1])
+    ):
+        int_part = parts_sp[0] + "".join(parts_sp[1:-1])
+        frac = parts_sp[-1]
+        try:
+            return float(f"{int_part}.{frac}")
+        except ValueError:
+            return None
+    if (
+        len(parts_sp) == 2
+        and parts_sp[0].isdigit()
+        and parts_sp[1].isdigit()
+        and len(parts_sp[1]) == 3
+    ):
+        if 2 <= len(parts_sp[0]) <= 3:
+            try:
+                return float(f"{parts_sp[0]}.{parts_sp[1]}")
+            except ValueError:
+                return None
+        if len(parts_sp[0]) == 1:
+            try:
+                return float(parts_sp[0] + parts_sp[1])
+            except ValueError:
+                return None
+    return None
+
+
 def _parse_amount_token(raw: str) -> float | None:
     """Parse FR/TN amounts: 15.575,000, 15 575,000, 22 176,003, 15,575.000."""
     if not raw or not str(raw).strip():
@@ -170,6 +212,21 @@ def _parse_amount_token(raw: str) -> float | None:
     t = re.sub(r"(?i)TND|EUR|USD|DT|DNT|QX\b", "", t).strip()
     if not t or not any(c.isdigit() for c in t):
         return None
+    # Factures / devis TN : OCR oublie souvent le point avant les millimes.
+    # Virgules façon export PDF : "171,000" → 1071.000 si uniquement des séparateurs de groupes.
+    # Ne pas fusionner "100 116,200" (qté / PU + virgule décimale FR) — espace ET virgule présents.
+    if "." not in t:
+        if "," in t and " " in t:
+            parts_sp = None
+        elif "," in t:
+            t_norm = re.sub(r"[, ]+", " ", t).strip()
+            parts_sp = t_norm.split()
+        else:
+            parts_sp = t.split()
+        if parts_sp:
+            gm = _parse_grouped_millimes_tokens(parts_sp)
+            if gm is not None:
+                return gm
     # "44 723.000" / "8 407.070" — espaces milliers, dernier bloc .### = millimes TN
     m_spdot = re.fullmatch(r"(\d{1,3}(?:\s\d{3})+)\.(\d{3,4})$", t)
     if m_spdot:
@@ -190,8 +247,16 @@ def _parse_amount_token(raw: str) -> float | None:
                 return float(f"{whole}.{frac}")
             except ValueError:
                 pass
-    # Qty + PU on one line: "100 116,200" (two 3-digit groups before comma) — not one amount
+    # « 100 116,200 » (STPA) — deux nombres ; « 142 000,000 » — milliers se terminant par 000 + millimes.
     if re.fullmatch(r"\d{3}\s\d{3},\d+", t):
+        left, _, rpart = t.partition(",")
+        last_seg = left.split()[-1]
+        if last_seg == "000":
+            whole = left.replace(" ", "")
+            try:
+                return float(f"{whole}.{rpart}")
+            except ValueError:
+                pass
         return None
     s = re.sub(r"\s+", "", t)
     if not any(c.isdigit() for c in s):
@@ -596,16 +661,41 @@ def _fix_line_designation_ocr(desig: str, ctx_upper: str) -> str:
 
 
 def _heur_invoice_number_line_first(text: str) -> str:
-    """Priorité : même ligne que N° FACTURE / FACTURE N°, puis référence FA… / BL…."""
+    """Priorité : même ligne que N° FACTURE / FACTURE N°, RÉF., N° DEVIS, puis FA… / BL…."""
     for ln in (text or "").splitlines():
         ls = ln.strip()
         if len(ls) < 5:
             continue
         ul = ls.upper()
-        if re.search(r"(?i)N[°O\.\s]*FACTURE|FACTURE\s*N[°O]", ul):
+        if re.search(r"(?i)N[°O\.\s]*DEVIS|DEVIS\s*N[°O]|N[°O]\s*DOCUMENT|DOCUMENT\s*N[°O]", ul):
+            m0 = _INV_DV_RE.search(ls)
+            if m0:
+                return m0.group(1).strip()[:80]
+            md = re.search(
+                r"(?i)(?:N[°O\.\s]*DEVIS|DEVIS\s*N[°O])\s*[:\s]*([A-Z0-9][A-Z0-9\-/]{2,40})",
+                ls,
+            )
+            if md and not re.match(r"^20\d{2}$", md.group(1)):
+                return md.group(1).strip()[:80]
+        if re.search(
+            r"(?i)\bR[EÉ]F\.?\s*N|R[EÉ]F[EÉ]RENCE\s*N|R[EÉ]F[EÉ]RENCE\s*[:\s]|^\s*R[EÉ]F\.?\s*[:\s]",
+            ul,
+        ) or re.search(r"(?i)\bREF\.?\s*[:\s]", ul):
+            mr = re.search(
+                r"(?i)(?:R[EÉ]F\.?\s*N\s*°?\s*|R[EÉ]F[EÉ]RENCE\s*[:\s]+|REF\.?\s*[:\s]+)([A-Z0-9][A-Z0-9\-/]{2,42})",
+                ls,
+            )
+            if mr:
+                cand = mr.group(1).strip()
+                if not re.fullmatch(r"\d{1,2}", cand) and len(cand) >= 4:
+                    return cand[:80]
+        if re.search(r"(?i)N[°O\.\s]*FACTURE|FACTURE\s*N[°O]|NUM[EÉ]RO\s*FAC", ul):
             m = _INV_FA_REF_RE.search(ls)
             if m:
                 return m.group(1).strip()[:80]
+            mf = _INV_FAC_DASH_RE.search(ls)
+            if mf:
+                return mf.group(1).strip()[:80]
             m2 = _INV_BL_REF_RE.search(ls)
             if m2 and len(m2.group(1)) <= 36:
                 return m2.group(1).strip()[:80]
@@ -619,7 +709,13 @@ def _heur_invoice_number_line_first(text: str) -> str:
 
 
 def _heur_find_invoice_number(text: str) -> str:
-    for ln in (text or "").splitlines():
+    raw = text or ""
+    # Formes compactes très discriminantes (évitent de rater un N° quand la ligne d’étiquette est bruitée).
+    for rx in (_INV_DV_RE, _INV_FAC_DASH_RE, _INV_FA_REF_RE, _INV_BC_REF_RE):
+        m = rx.search(raw)
+        if m:
+            return m.group(1).strip()[:80]
+    for ln in raw.splitlines():
         ls = ln.strip()
         ul = ls.upper()
         if re.search(r"(?i)\bDEVIS\s*N", ul):
@@ -631,13 +727,13 @@ def _heur_find_invoice_number(text: str) -> str:
                 cand = m.group(1).strip()
                 if not re.fullmatch(r"\d{1,2}", cand):
                     return cand[:80]
-    hit = _heur_invoice_number_line_first(text)
+    hit = _heur_invoice_number_line_first(raw)
     if hit:
         return hit
-    m = _INV_FA_REF_RE.search(text)
-    if m:
-        return m.group(1).strip()[:80]
-    m = _INV_NUM_RE.search(text)
+    m2 = _INV_BL_REF_RE.search(raw)
+    if m2 and len(m2.group(1)) <= 36:
+        return m2.group(1).strip()[:80]
+    m = _INV_NUM_RE.search(raw)
     if m:
         return m.group(1).strip()[:80]
     return ""
@@ -1433,26 +1529,95 @@ def reconcile_extracted_invoice_numbers(
     except (TypeError, ValueError):
         return ex
 
+    # TVA typiquement parsée ×1000 quand les lignes sont aberrantes — revenir à l’échelle TND.
+    if (
+        ttc > 50
+        and ttc < 500_000
+        and tax_f > max(50_000.0, 15.0 * ttc)
+        and tax_f / 1000.0 < ttc
+    ):
+        ex["tax_amount"] = round(tax_f / 1000.0, 3)
+        tax_f = float(ex["tax_amount"])
+
     if items_sum > 200:
+        # Σ lignes >> TTC imprimé : tableau OCR (colonnes permutées), ne pas aligner HT/TTC dessus.
+        lines_clearly_garbage = (
+            ttc > 50
+            and ttc < 500_000
+            and items_sum > max(5_000.0, 5.0 * ttc)
+        ) or (
+            sub > 500
+            and sub < 500_000
+            and items_sum > max(sub * 4.0, 200_000.0)
+        )
+        if lines_clearly_garbage and ocr_text and len((ocr_text or "").strip()) > 80:
+            heur_snap = heuristic_invoice_from_ocr(ocr_text, (transaction_type or "buy").lower())
+            try:
+                h_ttc = float(heur_snap.get("total_ttc") or 0)
+                h_sub = float(heur_snap.get("subtotal_htva") or 0)
+                h_tax = float(heur_snap.get("tax_amount") or 0)
+            except (TypeError, ValueError):
+                h_ttc = h_sub = h_tax = 0.0
+            h_items = [x for x in (heur_snap.get("items") or []) if isinstance(x, dict)]
+            if h_sub > 0 and (h_ttc > 0 or h_items):
+                ex["subtotal_htva"] = round(h_sub, 3)
+                sub = float(ex["subtotal_htva"])
+            if h_tax > 0 or h_ttc > 0:
+                if h_tax > 0:
+                    ex["tax_amount"] = round(h_tax, 3)
+                    tax_f = float(ex["tax_amount"])
+                if h_ttc > 0:
+                    ex["total_ttc"] = round(h_ttc, 3)
+                    ttc = float(ex["total_ttc"])
+            if h_items:
+                ex["items"] = h_items
+                items = h_items
+                items_sum = sum(float(i.get("line_total") or 0) for i in items)
+            elif h_sub > 0 and h_ttc > 0:
+                ex["items"] = []
+                items = []
+                items_sum = 0.0
+                lines_clearly_garbage = False
+
+        # Recalcul TTC depuis lignes seulement si Σ et TTC sont du même ordre de grandeur.
         if (
-            ttc > items_sum * 15
-            or (ttc > 2_000_000 and items_sum < 500_000)
-            or (ttc < items_sum * 0.5 and ttc > 0 and items_sum > 1000)
+            items_sum > 200
+            and (not lines_clearly_garbage or items_sum <= max(5000.0, 5.0 * ttc))
         ):
-            ex["total_ttc"] = round(items_sum + stamp_f + tax_f, 3)
-            ttc = float(ex["total_ttc"])
-        if sub <= 0 or sub > items_sum * 1.02 + 5 or sub < items_sum * 0.4:
-            ex["subtotal_htva"] = round(items_sum, 3)
-            sub = float(ex["subtotal_htva"])
-        expected = sub + stamp_f + tax_f
-        if (
-            expected > 100
-            and ttc > expected * 1.05
-            and abs(ttc - (items_sum + stamp_f + tax_f)) > max(50.0, items_sum * 0.02)
-        ):
-            alt = items_sum + stamp_f + tax_f
-            if alt > 0:
-                ex["total_ttc"] = round(alt, 3)
+            if (
+                ttc > items_sum * 15
+                or (ttc > 2_000_000 and items_sum < 500_000)
+                or (
+                    ttc < items_sum * 0.5
+                    and ttc > 0
+                    and items_sum > 1000
+                    and (
+                        ttc >= 500_000.0
+                        or items_sum <= max(ttc * 3.0, 500_000.0)
+                    )
+                )
+            ):
+                ex["total_ttc"] = round(items_sum + stamp_f + tax_f, 3)
+                ttc = float(ex["total_ttc"])
+            if (
+                sub <= 0
+                or sub > items_sum * 1.02 + 5
+                or (
+                    sub < items_sum * 0.4
+                    and items_sum <= max(sub * 5.0, ttc * 4.0, 500_000.0)
+                )
+            ):
+                ex["subtotal_htva"] = round(items_sum, 3)
+                sub = float(ex["subtotal_htva"])
+            expected = sub + stamp_f + tax_f
+            if (
+                expected > 100
+                and ttc > expected * 1.05
+                and abs(ttc - (items_sum + stamp_f + tax_f)) > max(50.0, items_sum * 0.02)
+            ):
+                alt = items_sum + stamp_f + tax_f
+                if alt > 0:
+                    ex["total_ttc"] = round(alt, 3)
     elif (
         items_sum <= 0
         and ocr_text
@@ -1475,6 +1640,22 @@ def reconcile_extracted_invoice_numbers(
                 ex["stamp_duty"] = hd
             if ht >= 0:
                 ex["tax_amount"] = ht
+    if ocr_text and not str(ex.get("invoice_number") or "").strip():
+        hit = _heur_find_invoice_number(ocr_text)
+        if hit:
+            ex["invoice_number"] = hit
+            nest = ex.get("extraction")
+            if isinstance(nest, dict):
+                nest["invoice_number"] = hit
+    elif ocr_text:
+        inv_cur = str(ex.get("invoice_number") or "").strip()
+        if inv_cur and not re.search(r"\d", inv_cur) and 2 <= len(inv_cur) <= 9:
+            hit = _heur_find_invoice_number(ocr_text)
+            if hit and re.search(r"\d", hit):
+                ex["invoice_number"] = hit
+                nest = ex.get("extraction")
+                if isinstance(nest, dict):
+                    nest["invoice_number"] = hit
     return ex
 
 

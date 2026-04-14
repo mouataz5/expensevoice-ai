@@ -130,15 +130,9 @@ export default function HomeScreen() {
         onPress={() => router.push("/scan")}
       />
       <QuickActionTile
-        title={t("voiceStudio")}
-        subtitle={t("quickVoiceDesc")}
-        icon="mic-outline"
-        onPress={() => router.push("/voice-studio")}
-      />
-      <QuickActionTile
         title={t("record")}
         subtitle={t("quickVoiceDesc")}
-        icon="radio-outline"
+        icon="mic-outline"
         onPress={() => router.push("/record")}
       />
       <QuickActionTile

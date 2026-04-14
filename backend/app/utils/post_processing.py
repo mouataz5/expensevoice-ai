@@ -246,6 +246,14 @@ def reconcile_draft_totals_coherent(
     return d, journal
 
 
+def _line_sum_subtotal_plausible(line_sum: float, sub_f: float) -> bool:
+    """Évite Σ lignes aberrantes (colonnes tableau permutées ×1000) quand le HT OCR est crédible."""
+    if sub_f <= 50 or line_sum <= 0:
+        return True
+    r = line_sum / sub_f
+    return (1.0 / 2.75) <= r <= 2.75
+
+
 def reconcile_subtotal_from_line_items(
     draft: InvoiceExtractionDraft,
 ) -> tuple[InvoiceExtractionDraft, dict[str, Any]]:
@@ -256,7 +264,13 @@ def reconcile_subtotal_from_line_items(
     if line_sum <= 1.0:
         return draft, journal
     sub = to_float_safe(draft.subtotal_amount)
+    total = to_float_safe(draft.total_amount)
+
     if sub is None or sub <= 0:
+        if total and total > 100 and line_sum > 100 and line_sum > 50 * float(total):
+            return draft, journal
+        if line_sum > 5_000_000:
+            return draft, journal
         return draft.model_copy(update={"subtotal_amount": round(line_sum, 3)}), {"subtotal_from_lines": line_sum}
 
     sub_f = float(sub)
@@ -269,6 +283,8 @@ def reconcile_subtotal_from_line_items(
         if q and pu and st and abs(float(q) * float(pu) - float(st)) <= max(2.0, 0.03 * float(st)):
             n_ok += 1
     if n_ok >= 2 and abs(line_sum - sub_f) > max(8.0, sub_f * 0.04):
+        if not _line_sum_subtotal_plausible(line_sum, sub_f):
+            return draft, journal
         return draft.model_copy(
             update={"subtotal_amount": round(line_sum, 3)}
         ), {"subtotal_from_coherent_lines": line_sum}

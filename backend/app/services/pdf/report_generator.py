@@ -1,7 +1,8 @@
 """
 Génération PDF rapports facture — façade sur `invoice_pdf.generate_invoice_report_pdf`.
 
-Conserve un point d’entrée `services/pdf/` distinct de l’implémentation historique.
+Le rapport respecte `pipeline.post_corrections.dynamic_table` : en confiance tableau basse,
+les lignes détaillées ne sont pas rendues (message de reprise manuelle), sans changer la signature.
 """
 from __future__ import annotations
 

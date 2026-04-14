@@ -21,8 +21,9 @@ function purchaseChipMeta(item: PurchaseOut): { label: string; tone: "neutral" |
   if (item.processing_status === "ready_for_review" && item.status === "pending") {
     return { label: "__readyForReview__", tone: "warning" };
   }
-  if (item.status === "approved") return { label: item.status, tone: "success" };
-  if (item.status === "rejected") return { label: item.status, tone: "danger" };
+  if (item.status === "pending_approval") return { label: "__pendingApproval__", tone: "info" };
+  if (item.status === "approved") return { label: "__approved__", tone: "success" };
+  if (item.status === "rejected") return { label: "__rejected__", tone: "danger" };
   if (item.status === "ready_for_review") return { label: item.status, tone: "warning" };
   return { label: item.status, tone: "neutral" };
 }
@@ -37,12 +38,14 @@ function PurchaseRow({
   t: (k: string) => string;
 }) {
   const meta = purchaseChipMeta(item);
-  const chipText =
-    meta.label === "__voiceSttProcessing__"
-      ? t("voiceSttProcessing")
-      : meta.label === "__readyForReview__"
-        ? t("readyForReview")
-        : meta.label;
+  const labelMap: Record<string, string> = {
+    "__voiceSttProcessing__": t("voiceSttProcessing"),
+    "__readyForReview__": t("readyForReview"),
+    "__pendingApproval__": t("pendingApproval"),
+    "__approved__": t("approved"),
+    "__rejected__": t("rejected"),
+  };
+  const chipText = labelMap[meta.label] ?? meta.label;
   return (
     <TouchableOpacity style={styles.rowWrap} onPress={onPress} activeOpacity={0.92}>
       <View style={styles.row}>
@@ -112,7 +115,7 @@ export default function PurchasesScreen() {
             primaryCtaTitle={t("emptyPurchasesCtaPrimary")}
             onPrimaryCta={() => router.push("/(tabs)/record")}
             secondaryCtaTitle={t("emptyPurchasesCtaSecondary")}
-            onSecondaryCta={() => router.push("/(tabs)/voice-studio")}
+            onSecondaryCta={() => router.push("/(tabs)/record")}
           />
         }
         refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} />}

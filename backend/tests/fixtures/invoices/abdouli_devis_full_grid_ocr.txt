@@ -1,0 +1,32 @@
+Entreprise Abdouli / EAE
+MF 1044308Q
+Tel: 98.104.335
+Sidi Bouzid
+
+DEVIS N° DV-2025-042
+Date: 22/12/2025
+
+CLIENT
+Société Abbes Pour Volaille lessouda
+MF 1823117/X
+
+Objet: Construction Poste 3 x 50 KVA
+
+DESIGNATION QTE P.U P.HT
+Transfo mono 50 kVA 3 8 229.000 24 687.000
+Ferrures PR transfo mono triplex 1 1 800.000 1 800.000
+Équipement BT poste aér triplex 50 kVA 1 5 810.000 5 810.000
+Mise à terre transfo aér triph ou monop 1 1 200.000 1 200.000
+Parafoudre 10 kA PR réseau 30 kV 3 375.000 1 125.000
+Pylône en fer rond 13-1700 1 6 590.000 6 590.000
+Plaque danger de mort PR support 1 70.000 70.000
+Herse de dériv 42 m câble 54 1 571.000 571.000
+Bretelle d ancrage PR 54 6 ALMELEC 4 50.000 200.000
+Fus 3H PR 50 kVA mono 3 30.000 900.000
+Sectionneur fus complet sans recharge 3 590.000 1 770.000
+
+TOTAL HT 44 723.000
+TVA 19 % 8 407.070
+TOTAL TTC 53 137.070 TND
+
+Arrêté la présente devis à la somme de cinquante trois milles cent trente sept dinars et 070 millimes.

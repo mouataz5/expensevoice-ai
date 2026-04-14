@@ -13,6 +13,11 @@ from statistics import median
 from typing import Any, Literal
 
 from app.schemas.invoice_pipeline import InvoiceLineDraft
+from app.services.invoice_facades.table_correction_engine import (
+    decide_manual_review,
+    repair_row_assignment,
+    validate_corrected_table,
+)
 from app.utils.money import normalize_tunisian_invoice_amount, to_float_safe
 
 logger = logging.getLogger(__name__)
@@ -54,6 +59,12 @@ _HEADER_PATTERNS: list[tuple[ColumnRole, re.Pattern[str]]] = [
 _SKIP_ROW_DESC = re.compile(
     r"(?i)^(total|sous[-\s]?total|tva|timbre|net\s|arr[eê]t|^\s*$|"
     r"montant\s*lettre|mode\s*de\s*paiement)"
+)
+
+# Ligne d'objet / titre du devis (pas un article) — souvent extraite comme ligne à zéros.
+_SKIP_SUBTITLE_ROW = re.compile(
+    r"(?is)^(construction\s+poste\b|poste\s+3\s*x\s*50\s*kva\b|objet\s*du\s+devis\b|"
+    r"objet\s*[:\s]|sujet\s*[:\s])",
 )
 
 
@@ -142,6 +153,75 @@ def _remap_row_ids_by_vertical_clusters(cells: list[dict[str, Any]]) -> list[dic
     return out
 
 
+def _remap_col_ids_by_horizontal_clusters(cells: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    Recalcule col_id depuis les bbox : même colonne ≈ même X médian (toutes lignes).
+
+    Complète le recalage des lignes (_remap_row_ids_by_vertical_clusters) pour une grille
+    (ligne, colonne) corrélée géométriquement, indépendamment des col_id parfois incohérents
+    renvoyés par le moteur de table en amont.
+
+    Tolérance adaptative : si une ligne contient N cellules mais le clustering ne produit que
+    K<N colonnes (photo en perspective / grands écarts), on resserre la tolérance jusqu'à obtenir
+    au moins N clusters — évite de fusionner P.U / P.H.T / P.T.T.C en une seule colonne.
+    """
+    if len(cells) < 4:
+        return cells
+    xcenters: list[float] = []
+    for c in cells:
+        xc = _cell_x_center(c)
+        if xc is not None:
+            xcenters.append(xc)
+    if len(xcenters) < 4:
+        return cells
+    unique_x = sorted({round(x, 2) for x in xcenters})
+    if len(unique_x) < 2:
+        return cells
+    gaps = [unique_x[i + 1] - unique_x[i] for i in range(len(unique_x) - 1)]
+    med_gap = float(median(gaps)) if gaps else 24.0
+
+    row_ids = {c["row_id"] for c in cells}
+    max_cols_in_any_row = 1
+    for rid in row_ids:
+        max_cols_in_any_row = max(max_cols_in_any_row, sum(1 for c in cells if c["row_id"] == rid))
+    target_clusters = min(max_cols_in_any_row, 14)
+
+    def _centroids_for_tol(tol: float) -> list[float]:
+        bins_c: list[list[float]] = []
+        for x in unique_x:
+            placed = False
+            for b in bins_c:
+                cx = sum(b) / len(b)
+                if abs(x - cx) <= tol:
+                    b.append(x)
+                    placed = True
+                    break
+            if not placed:
+                bins_c.append([x])
+        return sorted(sum(b) / len(b) for b in bins_c)
+
+    centroids: list[float] = []
+    for frac in (0.50, 0.42, 0.35, 0.30, 0.25, 0.21, 0.18, 0.15, 0.125, 0.105, 0.09, 0.075, 0.06, 0.05):
+        tol = max(2.0, med_gap * frac)
+        centroids = _centroids_for_tol(tol)
+        if len(centroids) >= target_clusters:
+            break
+    if len(centroids) < target_clusters:
+        centroids = _centroids_for_tol(max(1.2, med_gap * 0.042))
+
+    def _col_for_x(x: float) -> int:
+        return min(range(len(centroids)), key=lambda i: abs(centroids[i] - x))
+
+    out: list[dict[str, Any]] = []
+    for c in cells:
+        cc = dict(c)
+        xc = _cell_x_center(cc)
+        if xc is not None:
+            cc["col_id"] = _col_for_x(xc)
+        out.append(cc)
+    return out
+
+
 def _normalize_cells(table: dict[str, Any]) -> list[dict[str, Any]]:
     cells = table.get("cells") or []
     out: list[dict[str, Any]] = []
@@ -168,7 +248,10 @@ def _normalize_cells(table: dict[str, Any]) -> list[dict[str, Any]]:
                 "is_header": bool(c.get("is_header")),
             }
         )
-    return _remap_row_ids_by_vertical_clusters(out)
+    # Grille conjointe : d’abord lignes (Y), puis colonnes (X) pour corréler les deux axes.
+    out = _remap_row_ids_by_vertical_clusters(out)
+    out = _remap_col_ids_by_horizontal_clusters(out)
+    return out
 
 
 def _median_x_by_col(cells: list[dict[str, Any]]) -> dict[int, float]:
@@ -289,6 +372,26 @@ def _parse_numeric_cell(s: str) -> float | None:
     return normalize_tunisian_invoice_amount(str(s).strip())
 
 
+def _parse_quantity_cell(text: str | None) -> float | None:
+    """
+    Quantité : éviter « 4.760 » (OCR colonnes) lu comme 4,76 — une marge + 3 chiffres = qté 1 chiffre.
+    """
+    if not text or not str(text).strip():
+        return None
+    raw = re.sub(r"\s+", "", str(text).strip())
+    m1 = re.match(r"^(\d)\.(\d{3})$", raw)
+    if m1:
+        return float(int(m1.group(1)))
+    v = _parse_numeric_cell(text)
+    if v is None:
+        v = to_float_safe(text)
+    if v is not None and 0 < v <= 100_000:
+        r = round(v)
+        if abs(v - float(r)) < 0.051:
+            return float(int(r))
+    return v
+
+
 def parse_surya_table_rows(
     table: dict[str, Any],
     *,
@@ -325,9 +428,7 @@ def parse_surya_table_rows(
             elif role == "unit":
                 unit = text or None
             elif role == "quantity":
-                qty = _parse_numeric_cell(text)
-                if qty is None:
-                    qty = to_float_safe(text)
+                qty = _parse_quantity_cell(text)
             elif role == "unit_price":
                 pu = _parse_numeric_cell(text)
             elif role == "line_ht":
@@ -341,6 +442,14 @@ def parse_surya_table_rows(
         if d and _SKIP_ROW_DESC.search(d):
             journal.append(f"skip_total_row_{rid}")
             continue
+        if d and _SKIP_SUBTITLE_ROW.search(d):
+
+            def _nil_money(x: Any) -> bool:
+                return x is None or x == 0 or x == 0.0
+
+            if _nil_money(qty) and _nil_money(pu) and _nil_money(ht) and _nil_money(ttc):
+                journal.append(f"skip_subtitle_row_{rid}")
+                continue
 
         rows_out.append(
             TableRowModel(
@@ -442,6 +551,34 @@ def validate_and_correct_rows(
         )
         q, pu, ht = nr.quantity, nr.unit_price, nr.line_ht
         if q is not None and pu is not None and ht is not None:
+            if not _approx(
+                float(q) * float(pu),
+                float(ht),
+                tol_ratio=0.02,
+                tol_abs=max(2.0, abs(float(ht)) * 0.02),
+            ):
+                for m in (10.0, 100.0, 1000.0, 10000.0):
+                    p2 = float(pu) / m
+                    if p2 <= 0:
+                        continue
+                    if _approx(
+                        float(q) * p2,
+                        float(ht),
+                        tol_ratio=0.025,
+                        tol_abs=max(2.0, abs(float(ht)) * 0.025),
+                    ):
+                        nr = TableRowModel(
+                            description=nr.description,
+                            unit=nr.unit,
+                            quantity=nr.quantity,
+                            unit_price=round(p2, 6),
+                            line_ht=nr.line_ht,
+                            line_ttc=nr.line_ttc,
+                            source_row_id=nr.source_row_id,
+                        )
+                        pu = p2
+                        corrections.append(f"row_{nr.source_row_id}_pu_rescale_div_{int(m)}")
+                        break
             exp = round(float(q) * float(pu), 4)
             if not _approx(exp, float(ht), tol_ratio=0.02, tol_abs=max(2.0, abs(float(ht)) * 0.02)):
                 if _approx(exp, float(ht), tol_ratio=0.06, tol_abs=5.0):
@@ -474,12 +611,26 @@ def _table_row_to_line_draft(r: TableRowModel) -> InvoiceLineDraft:
     )
 
 
-def _score_table(table: dict[str, Any]) -> tuple[int, int]:
-    """(nb lignes données plausible, nb cellules) — pour choisir la meilleure table."""
+def _score_table(table: dict[str, Any]) -> tuple[int, int, int]:
+    """
+    Clé de tri (pour max) : (priorité_structurale, lignes_plausibles, nb_cellules).
+
+    Priorité 0 = suspect « mini bloc totaux » (peu de lignes/colonnes, pas de colonne désignation).
+    Priorité 1 = grille articles habituelle.
+    """
     cells = _normalize_cells(table)
     if not cells:
-        return 0, 0
+        return 0, 0, 0
     info = detect_table_columns(table, cells=cells)
+    col_roles = info.get("col_roles") or {}
+    has_designation = any(v == "designation" for v in col_roles.values())
+    row_ids = {c["row_id"] for c in cells}
+    col_ids = {c["col_id"] for c in cells}
+    n_rows = len(row_ids)
+    n_cols = len(col_ids)
+    mini_totals_suspect = (not has_designation) and n_rows <= 4 and n_cols <= 3
+    structural_tier = 0 if mini_totals_suspect else 1
+
     rows, _j = parse_surya_table_rows(table, column_info=info)
     rows, _ = validate_and_correct_rows(rows)
     valid_lines = sum(
@@ -488,14 +639,42 @@ def _score_table(table: dict[str, Any]) -> tuple[int, int]:
         if (r.description or "").strip()
         and (r.line_ht is not None or (r.quantity is not None and r.unit_price is not None))
     )
-    return valid_lines, len(cells)
+    return structural_tier, valid_lines, len(cells)
+
+
+def _merge_surya_document_totals(
+    metadata: dict[str, Any],
+    document_hints: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Fusionne totaux OCR Surya (si présents) et indices issus du brouillon facture (LLM + heuristique)."""
+    out: dict[str, Any] = dict(metadata.get("surya_totals") or {})
+    if not document_hints:
+        return out
+    for key in (
+        "subtotal_amount",
+        "subtotal_htva",
+        "tax_amount",
+        "total_amount",
+        "total_ttc",
+        "stamp_tax",
+        "stamp_duty",
+        "tax_rate_percent",
+    ):
+        v = document_hints.get(key)
+        if v is not None:
+            out[key] = v
+    return out
 
 
 def extract_invoice_lines_from_surya_metadata(
     metadata: dict[str, Any] | None,
+    *,
+    document_hints: dict[str, Any] | None = None,
 ) -> tuple[list[InvoiceLineDraft], dict[str, Any]]:
     """
     Point d'entrée pipeline : extrait des InvoiceLineDraft depuis metadata['surya_tables'].
+
+    document_hints: totaux / taux TVA déjà détectés sur le brouillon (améliore scoring et validation).
 
     Retourne (lignes, debug dict) ; debug['applied_to_draft'] indique si le pipeline doit
     remplacer draft.items.
@@ -515,21 +694,28 @@ def extract_invoice_lines_from_surya_metadata(
         return [], out_debug
 
     best: dict[str, Any] | None = None
-    best_score = (-1, -1)
+    best_score = (-1, -1, -1)
     best_idx = -1
     summaries: list[dict[str, Any]] = []
     for idx, tbl in enumerate(tables):
         if not isinstance(tbl, dict):
             continue
         sc = _score_table(tbl)
-        summaries.append({"table_idx": idx, "valid_line_score": sc[0], "n_cells": sc[1]})
+        summaries.append(
+            {
+                "table_idx": idx,
+                "structural_tier": sc[0],
+                "valid_line_score": sc[1],
+                "n_cells": sc[2],
+            }
+        )
         if sc > best_score:
             best_score = sc
             best = tbl
             best_idx = idx
 
     out_debug["tables"] = summaries
-    if not best or best_score[0] < 1:
+    if not best or best_score[1] < 1:
         out_debug["reason"] = "no_usable_table"
         return [], out_debug
 
@@ -546,6 +732,60 @@ def extract_invoice_lines_from_surya_metadata(
     out_debug["corrections"] = val_journal
     out_debug["rows_after_validation"] = [r.__dict__ for r in rows]
 
+    # Table correction engine: scoring + réparation par ligne, puis décision manual review.
+    amount_vals: list[float] = []
+    qty_vals: list[float] = []
+    for r in rows:
+        if r.unit_price is not None:
+            amount_vals.append(float(r.unit_price))
+        if r.line_ht is not None:
+            amount_vals.append(float(r.line_ht))
+        if r.line_ttc is not None:
+            amount_vals.append(float(r.line_ttc))
+        if r.quantity is not None:
+            qty_vals.append(float(r.quantity))
+    amount_vals = [x for x in amount_vals if x > 0]
+    qty_vals = [x for x in qty_vals if x > 0]
+    merged_totals = _merge_surya_document_totals(metadata, document_hints)
+    tax_rate = merged_totals.get("tax_rate_percent")
+    try:
+        tax_rate_f = float(tax_rate) if tax_rate is not None else None
+    except (TypeError, ValueError):
+        tax_rate_f = None
+    doc_ctx = {
+        "row_stats": {
+            "median_unit_price": float(median(amount_vals)) if amount_vals else None,
+            "median_quantity": float(median(qty_vals)) if qty_vals else None,
+        },
+        "totals": merged_totals,
+        "tax_rate_percent": tax_rate_f,
+    }
+    engine_rows: list[dict[str, Any]] = []
+    corrected_rows: list[TableRowModel] = []
+    for r in rows:
+        rep = repair_row_assignment(r, doc_ctx)
+        corrected_rows.append(rep["row"])
+        engine_rows.append(
+            {
+                "source_row_id": r.source_row_id,
+                "confidence": rep["confidence"],
+                "second_best": rep["second_best"],
+                "score_gap": rep["score_gap"],
+                "auto_repaired": rep["auto_repaired"],
+                "score_details": rep["score_details"],
+            }
+        )
+    rows = corrected_rows
+
+    table_validation = validate_corrected_table(rows, doc_ctx["totals"])
+    manual_review_required = decide_manual_review(engine_rows, table_validation)
+    out_debug["table_correction"] = {
+        "rows": engine_rows,
+        "global_validation": table_validation,
+        "manual_review_required": manual_review_required,
+        "corrected_count": sum(1 for r in engine_rows if r.get("auto_repaired")),
+    }
+
     drafts: list[InvoiceLineDraft] = []
     for r in rows:
         if not (r.description or "").strip():
@@ -561,8 +801,35 @@ def extract_invoice_lines_from_surya_metadata(
         out_debug["reason"] = "no_valid_line_drafts"
         return [], out_debug
 
+    line_sum_ht = sum(float(d.line_subtotal or 0) for d in drafts)
+    try:
+        sub_hint = None
+        for k in ("subtotal_amount", "subtotal_htva"):
+            v = merged_totals.get(k)
+            if v is not None:
+                sub_hint = float(v)
+                break
+    except (TypeError, ValueError):
+        sub_hint = None
+    if sub_hint is not None and sub_hint > 80 and line_sum_ht > 100:
+        ratio = line_sum_ht / sub_hint
+        if ratio > 2.75 or ratio < (1.0 / 2.75):
+            out_debug["applied_to_draft"] = False
+            out_debug["reason"] = "line_sum_vs_document_subtotal_mismatch"
+            out_debug["line_sum_sanity"] = {
+                "line_sum_ht": round(line_sum_ht, 3),
+                "subtotal_hint": sub_hint,
+                "ratio": round(ratio, 4),
+            }
+            return [], out_debug
+
     out_debug["applied_to_draft"] = True
     out_debug["reason"] = "ok"
+    if manual_review_required and len(drafts) <= 1:
+        # Cas très incertain: éviter d'injecter des lignes faibles dans le draft final.
+        out_debug["applied_to_draft"] = False
+        out_debug["reason"] = "manual_review_required"
+        return [], out_debug
     out_debug["line_count"] = len(drafts)
     logger.info(
         "surya_table_extractor: using table %s with %d line items",
