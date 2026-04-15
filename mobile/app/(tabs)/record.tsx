@@ -7,9 +7,10 @@ import {
   ActivityIndicator,
   ScrollView,
   Animated,
+  Modal,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import { useLocale } from "../../src/context/LocaleContext";
 import { colors } from "../../src/theme/colors";
@@ -18,11 +19,14 @@ import {
   uploadVoice,
   getPurchase,
   confirmPurchase,
+  listMyPurchases,
   isVoicePipelineReady,
   sttLanguageFromLocale,
   type PurchaseOut,
 } from "../../src/api/purchases";
 import { queryKeys } from "../../src/queryKeys";
+import { fetchAllowedCategories } from "../../src/api/categories-public";
+import { listFarms } from "../../src/api/farms";
 import Toast from "react-native-toast-message";
 import {
   useAudioRecorder,
@@ -42,6 +46,7 @@ import {
 import { confirmAsync } from "../../src/lib/confirm";
 
 type TxType = "buy" | "sell";
+type SelectField = "product_name" | "category" | "farm";
 
 const SILENCE_THRESHOLD_DB = -38;
 const SILENCE_AUTO_STOP_MS = 3000;
@@ -175,6 +180,88 @@ export default function RecordScreen() {
     unit_price: "0",
     total_amount: "0",
   });
+  const [selectField, setSelectField] = useState<SelectField | null>(null);
+  const [selectSearch, setSelectSearch] = useState("");
+  const [selectedFarmId, setSelectedFarmId] = useState("");
+
+  const { data: allowedCategories = [] } = useQuery({
+    queryKey: queryKeys.allowedCategories,
+    queryFn: fetchAllowedCategories,
+  });
+  const { data: recentPurchases = [] } = useQuery({
+    queryKey: queryKeys.purchasesMeFiltered({ limit: 100 }),
+    queryFn: () => listMyPurchases({ limit: 100 }),
+  });
+  const { data: farms = [] } = useQuery({
+    queryKey: queryKeys.farms,
+    queryFn: listFarms,
+  });
+  const selectedFarmName = useMemo(
+    () => farms.find((f) => f.id === selectedFarmId)?.name ?? "",
+    [farms, selectedFarmId]
+  );
+
+  const productOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const p of recentPurchases) {
+      const v = (p.product_name || "").trim();
+      if (v) set.add(v);
+    }
+    const reviewValue = (review?.product_name || "").trim();
+    if (reviewValue) set.add(reviewValue);
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [recentPurchases, review?.product_name]);
+
+  const categoryOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const c of allowedCategories) {
+      const v = (c || "").trim();
+      if (v) set.add(v);
+    }
+    for (const p of recentPurchases) {
+      const v = (p.category || "").trim();
+      if (v) set.add(v);
+    }
+    const reviewValue = (review?.category || "").trim();
+    if (reviewValue) set.add(reviewValue);
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [allowedCategories, recentPurchases, review?.category]);
+
+  const currentOptions = useMemo(() => {
+    const base =
+      selectField === "category"
+        ? categoryOptions
+        : selectField === "farm"
+          ? farms.map((f) => f.name)
+          : productOptions;
+    const q = selectSearch.trim().toLowerCase();
+    if (!q) return base;
+    return base.filter((v) => v.toLowerCase().includes(q));
+  }, [selectField, categoryOptions, productOptions, farms, selectSearch]);
+
+  const openSelector = useCallback((field: SelectField) => {
+    setSelectField(field);
+    setSelectSearch("");
+  }, []);
+
+  const closeSelector = useCallback(() => {
+    setSelectField(null);
+    setSelectSearch("");
+  }, []);
+
+  const applySelection = useCallback(
+    (value: string) => {
+      if (!selectField) return;
+      if (selectField === "farm") {
+        const farm = farms.find((f) => f.name === value);
+        setSelectedFarmId(farm?.id ?? "");
+      } else {
+        setForm((f) => ({ ...f, [selectField]: value }));
+      }
+      closeSelector();
+    },
+    [selectField, closeSelector, farms]
+  );
 
   const silenceStartRef = useRef<number | null>(null);
   const [silenceCountdown, setSilenceCountdown] = useState(SILENCE_AUTO_STOP_MS);
@@ -250,6 +337,7 @@ export default function RecordScreen() {
       if (!uri) throw new Error("No recording URI");
       const res = await uploadVoice(uri, txType, {
         language: sttLanguageFromLocale(locale),
+        farm_id: selectedFarmId,
       });
       setPolling(true);
       let lastPurchase: PurchaseOut | null = null;
@@ -285,7 +373,7 @@ export default function RecordScreen() {
         await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
       } catch { /* ignore */ }
     }
-  }, [recorder, txType, locale, t]);
+  }, [recorder, txType, locale, t, selectedFarmId]);
 
   const handleConfirm = useCallback(async () => {
     if (!review) return;
@@ -333,6 +421,14 @@ export default function RecordScreen() {
       <StepIndicator steps={stepLabels} activeIndex={stepActiveIndex} />
 
       <Text style={styles.sectionLabel}>{t("selectType")}</Text>
+      <FormField label="Ferme">
+        <TouchableOpacity style={styles.selectInput} onPress={() => openSelector("farm")} activeOpacity={0.8}>
+          <Text style={selectedFarmName ? styles.selectInputValue : styles.selectInputPlaceholder}>
+            {selectedFarmName || "Sélectionner une ferme"}
+          </Text>
+          <Ionicons name="chevron-down" size={18} color={colors.textMuted} />
+        </TouchableOpacity>
+      </FormField>
       <View style={styles.segWrap}>
         {(["buy", "sell"] as const).map((val) => (
           <TouchableOpacity
@@ -355,6 +451,7 @@ export default function RecordScreen() {
             <TouchableOpacity
               style={styles.recordBtn}
               onPress={() => void startRecording()}
+              disabled={!selectedFarmId}
               activeOpacity={0.7}
               accessibilityRole="button"
               accessibilityLabel={t("record")}
@@ -364,6 +461,7 @@ export default function RecordScreen() {
               </View>
               <Text style={styles.recordBtnLabel}>{t("voiceTapRecord")}</Text>
               <Text style={styles.recordBtnHint}>{t("voiceAutoStopHint")}</Text>
+              {!selectedFarmId ? <Text style={styles.recordBtnHint}>Choisissez une ferme avant de commencer.</Text> : null}
             </TouchableOpacity>
           )}
 
@@ -413,10 +511,20 @@ export default function RecordScreen() {
           )}
 
           <FormField label={t("productName")}>
-            <TextFieldInput value={form.product_name} onChangeText={(v) => setForm((f) => ({ ...f, product_name: v }))} />
+            <TouchableOpacity style={styles.selectInput} onPress={() => openSelector("product_name")} activeOpacity={0.8}>
+              <Text style={form.product_name ? styles.selectInputValue : styles.selectInputPlaceholder}>
+                {form.product_name || t("productName")}
+              </Text>
+              <Ionicons name="chevron-down" size={18} color={colors.textMuted} />
+            </TouchableOpacity>
           </FormField>
           <FormField label={t("category")}>
-            <TextFieldInput value={form.category} onChangeText={(v) => setForm((f) => ({ ...f, category: v }))} />
+            <TouchableOpacity style={styles.selectInput} onPress={() => openSelector("category")} activeOpacity={0.8}>
+              <Text style={form.category ? styles.selectInputValue : styles.selectInputPlaceholder}>
+                {form.category || t("category")}
+              </Text>
+              <Ionicons name="chevron-down" size={18} color={colors.textMuted} />
+            </TouchableOpacity>
           </FormField>
           <View style={styles.row}>
             <View style={styles.halfField}>
@@ -438,6 +546,50 @@ export default function RecordScreen() {
           <GhostButton title={t("retry")} onPress={resetFlow} />
         </Card>
       )}
+      <Modal visible={!!selectField} transparent animationType="slide" onRequestClose={closeSelector}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalSheet}>
+            <Text style={styles.modalTitle}>
+              {selectField === "category" ? t("category") : selectField === "farm" ? "Ferme" : t("productName")}
+            </Text>
+            <TextFieldInput
+              value={selectSearch}
+              onChangeText={setSelectSearch}
+              placeholder={
+                selectField === "category"
+                  ? "Rechercher catégorie..."
+                  : selectField === "farm"
+                    ? "Rechercher ferme..."
+                    : "Rechercher produit..."
+              }
+            />
+            <ScrollView style={styles.optionsList} contentContainerStyle={styles.optionsListContent}>
+              {currentOptions.map((option) => (
+                <TouchableOpacity
+                  key={option}
+                  style={styles.optionItem}
+                  onPress={() => applySelection(option)}
+                >
+                  <Text style={styles.optionText}>{option}</Text>
+                </TouchableOpacity>
+              ))}
+              {!!selectSearch.trim() && !currentOptions.includes(selectSearch.trim()) && (
+                <TouchableOpacity
+                  style={[styles.optionItem, styles.optionCustom]}
+                  onPress={() => applySelection(selectSearch.trim())}
+                >
+                  <Ionicons name="add-circle-outline" size={16} color={colors.primary} />
+                  <Text style={styles.optionCustomText}>Utiliser "{selectSearch.trim()}"</Text>
+                </TouchableOpacity>
+              )}
+              {!currentOptions.length && !selectSearch.trim() && (
+                <Text style={styles.optionEmptyText}>Aucune option disponible</Text>
+              )}
+            </ScrollView>
+            <GhostButton title={t("cancel")} onPress={closeSelector} />
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   );
 }
@@ -552,4 +704,57 @@ const styles = StyleSheet.create({
 
   row: { flexDirection: "row", gap: space.md },
   halfField: { flex: 1 },
+  selectInput: {
+    minHeight: 48,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    paddingHorizontal: space.md,
+    backgroundColor: colors.surface,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  selectInputValue: { color: colors.text, fontSize: font.md },
+  selectInputPlaceholder: { color: colors.textMuted, fontSize: font.md },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.35)",
+    justifyContent: "flex-end",
+  },
+  modalSheet: {
+    backgroundColor: colors.surface,
+    borderTopLeftRadius: radius.xl,
+    borderTopRightRadius: radius.xl,
+    padding: space.lg,
+    gap: space.sm,
+    maxHeight: "75%",
+  },
+  modalTitle: {
+    fontSize: font.lg,
+    fontWeight: font.bold,
+    color: colors.primaryDark,
+    marginBottom: space.xs,
+  },
+  optionsList: { maxHeight: 320 },
+  optionsListContent: { gap: space.xs, paddingBottom: space.sm },
+  optionItem: {
+    minHeight: 44,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    paddingHorizontal: space.md,
+    justifyContent: "center",
+    backgroundColor: colors.surfaceMuted,
+  },
+  optionText: { fontSize: font.sm, color: colors.text },
+  optionCustom: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: space.xs,
+    backgroundColor: colors.primaryMuted,
+    borderColor: colors.primary,
+  },
+  optionCustomText: { fontSize: font.sm, color: colors.primaryDark, fontWeight: font.semibold },
+  optionEmptyText: { textAlign: "center", color: colors.textMuted, paddingVertical: space.md },
 });

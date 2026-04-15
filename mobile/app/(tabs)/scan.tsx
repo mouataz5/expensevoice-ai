@@ -10,7 +10,7 @@ import {
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { useRouter } from "expo-router";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale } from "../../src/context/LocaleContext";
 import { colors } from "../../src/theme/colors";
 import { font, radius, space } from "../../src/theme/tokens";
@@ -42,6 +42,7 @@ import {
   scanInvoice,
   type InvoicePreview,
 } from "../../src/api/invoices";
+import { listFarms } from "../../src/api/farms";
 import { queryKeys } from "../../src/queryKeys";
 import Toast from "react-native-toast-message";
 import * as FileSystem from "expo-file-system/legacy";
@@ -69,6 +70,7 @@ export default function ScanScreen() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [txType, setTxType] = useState<TxType>(null);
+  const [farmId, setFarmId] = useState("");
   const [imageUri, setImageUri] = useState<string | null>(null);
   const [processing, setProcessing] = useState(false);
   const [invoiceId, setInvoiceId] = useState<string | null>(null);
@@ -85,6 +87,10 @@ export default function ScanScreen() {
   const [scanQuality, setScanQuality] = useState<ScanQualityResult | null>(null);
   const [qualityAnalyzing, setQualityAnalyzing] = useState(false);
   const [userAcknowledgedPoor, setUserAcknowledgedPoor] = useState(false);
+  const { data: farms = [] } = useQuery({
+    queryKey: queryKeys.farms,
+    queryFn: listFarms,
+  });
 
   useEffect(() => {
     if (!imageUri || ready) {
@@ -210,7 +216,7 @@ export default function ScanScreen() {
     setStatus("processing");
     setPreview(null);
     try {
-      const { invoice_id, status: s } = await scanInvoice(imageUri, txType);
+      const { invoice_id, status: s } = await scanInvoice(imageUri, txType, farmId);
       setInvoiceId(invoice_id);
       setStatus(s);
       await pollUntilReady(invoice_id);
@@ -248,13 +254,54 @@ export default function ScanScreen() {
 
   const saveManualCorrections = async () => {
     if (!invoiceId) return;
+    const supplier = editSupplier.trim();
+    const invoiceNumber = editInvoiceNumber.trim();
+    const invoiceDate = editInvoiceDate.trim();
+    const currency = editCurrency.trim().toUpperCase();
+    const currentTotalRaw =
+      preview?.total_ttc ?? preview?.totals?.ttc ?? (preview?.extraction as { total_amount?: number } | undefined)?.total_amount ?? null;
+
+    if (supplier && (supplier.length < 2 || supplier.length > 255)) {
+      Toast.show({ type: "error", text1: t("error"), text2: "Nom fournisseur invalide (2..255 caractères)." });
+      return;
+    }
+    if (invoiceNumber && invoiceNumber.length > 100) {
+      Toast.show({ type: "error", text1: t("error"), text2: "Numéro de facture trop long." });
+      return;
+    }
+    if (invoiceDate && !/^\d{4}-\d{2}-\d{2}$/.test(invoiceDate)) {
+      Toast.show({ type: "error", text1: t("error"), text2: "Date invalide. Format attendu: YYYY-MM-DD." });
+      return;
+    }
+    if (currency && !["TND", "EUR", "USD", "MAD", "DZD", "SAR"].includes(currency)) {
+      Toast.show({ type: "error", text1: t("error"), text2: "Devise invalide (TND, EUR, USD, MAD, DZD, SAR)." });
+      return;
+    }
+
     const patch: Record<string, unknown> = {};
-    if (editSupplier.trim()) patch.supplier_name = editSupplier.trim();
-    if (editInvoiceNumber.trim()) patch.invoice_number = editInvoiceNumber.trim();
-    if (editInvoiceDate.trim()) patch.invoice_date = editInvoiceDate.trim();
-    if (editCurrency.trim()) patch.currency = editCurrency.trim();
+    if (supplier) patch.supplier_name = supplier;
+    if (invoiceNumber) patch.invoice_number = invoiceNumber;
+    if (invoiceDate) patch.invoice_date = invoiceDate;
+    if (currency) patch.currency = currency;
     const parsed = parseFloat(String(editTotal).replace(",", "."));
-    if (editTotal.trim() && !Number.isNaN(parsed)) patch.total_amount = parsed;
+    if (editTotal.trim() && !Number.isNaN(parsed)) {
+      if (parsed < 0) {
+        Toast.show({ type: "error", text1: t("error"), text2: "Le total ne peut pas être négatif." });
+        return;
+      }
+      if (currentTotalRaw != null && Number(currentTotalRaw) > 0) {
+        const ratio = Math.abs(parsed - Number(currentTotalRaw)) / Number(currentTotalRaw);
+        if (ratio > 0.5) {
+          Toast.show({
+            type: "error",
+            text1: t("error"),
+            text2: "Écart trop grand (>50%). Vérifiez les lignes ou relancez l'extraction.",
+          });
+          return;
+        }
+      }
+      patch.total_amount = parsed;
+    }
     if (Object.keys(patch).length === 0) {
       Toast.show({ type: "error", text1: t("error"), text2: "Nothing to save" });
       return;
@@ -373,6 +420,18 @@ export default function ScanScreen() {
         <StepIndicator steps={scanStepLabels} activeIndex={scanStepActiveIndex} />
 
         <Text style={styles.label}>{t("selectType")}</Text>
+        <Text style={styles.label}>Ferme</Text>
+        <View style={styles.farmWrap}>
+          {farms.map((f) => (
+            <TouchableOpacity
+              key={f.id}
+              style={[styles.farmChip, farmId === f.id && styles.farmChipOn]}
+              onPress={() => setFarmId(f.id)}
+            >
+              <Text style={[styles.farmChipText, farmId === f.id && styles.farmChipTextOn]}>{f.name}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
         <View style={styles.segWrap}>
           <TouchableOpacity
             style={[styles.segSide, txType === "buy" && styles.segSideOn]}
@@ -400,7 +459,7 @@ export default function ScanScreen() {
               <SecondaryButton
                 title={t("pickImage")}
                 onPress={() => void pickImage()}
-                disabled={!txType || processing}
+                disabled={!txType || !farmId || processing}
                 icon="images-outline"
               />
             </View>
@@ -408,7 +467,7 @@ export default function ScanScreen() {
               <SecondaryButton
                 title={t("takePhoto")}
                 onPress={() => void takePhoto()}
-                disabled={!txType || processing}
+                disabled={!txType || !farmId || processing}
                 icon="camera-outline"
               />
             </View>
@@ -451,6 +510,7 @@ export default function ScanScreen() {
                 loading={processing}
                 disabled={
                   processing ||
+                  !farmId ||
                   qualityAnalyzing ||
                   (scanQuality?.level === "poor" && !userAcknowledgedPoor)
                 }
@@ -599,6 +659,18 @@ const styles = StyleSheet.create({
   content: { paddingBottom: space.xxxl },
   successBannerWrap: { marginBottom: space.md },
   label: { fontSize: font.sm, color: colors.textSecondary, marginBottom: space.sm, marginTop: space.md, fontWeight: font.semibold },
+  farmWrap: { flexDirection: "row", flexWrap: "wrap", gap: space.xs, marginBottom: space.md },
+  farmChip: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.full,
+    paddingHorizontal: space.md,
+    paddingVertical: space.xs,
+    backgroundColor: colors.surface,
+  },
+  farmChipOn: { backgroundColor: colors.primary, borderColor: colors.primary },
+  farmChipText: { color: colors.textSecondary, fontSize: font.sm, fontWeight: font.semibold },
+  farmChipTextOn: { color: "#fff" },
   segWrap: {
     flexDirection: "row",
     backgroundColor: colors.surfaceMuted,

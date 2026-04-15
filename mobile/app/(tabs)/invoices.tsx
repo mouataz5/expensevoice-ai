@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -14,7 +14,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useLocale } from "../../src/context/LocaleContext";
 import { colors } from "../../src/theme/colors";
 import { font, radius, shadow, space } from "../../src/theme/tokens";
-import { listMyInvoices, type InvoiceListItem } from "../../src/api/invoices";
+import { listMyInvoices, type InvoiceFilterParams, type InvoiceListItem } from "../../src/api/invoices";
 import { queryKeys } from "../../src/queryKeys";
 import {
   EmptyState,
@@ -22,6 +22,8 @@ import {
   StatusPill,
   invoiceStatusTone,
   TextFieldInput,
+  FilterSheet,
+  type ListFilterState,
   InvoiceListSkeleton,
   ProductBrandMark,
 } from "../../src/components/ui";
@@ -75,6 +77,33 @@ export default function EmployeeInvoicesScreen() {
   const router = useRouter();
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  const [filterVisible, setFilterVisible] = useState(false);
+  const [filters, setFilters] = useState<ListFilterState>({});
+  const [debouncedQ, setDebouncedQ] = useState("");
+  useEffect(() => {
+    const timer = setTimeout(
+      () => setDebouncedQ((filters.q ?? query ?? "").trim()),
+      300
+    );
+    return () => clearTimeout(timer);
+  }, [filters.q, query]);
+
+  const apiParams = useMemo<InvoiceFilterParams>(() => {
+    const toNum = (v?: string) => (v && v.trim() ? Number(v.replace(",", ".")) : undefined);
+    return {
+      q: debouncedQ || undefined,
+      status: filters.status || statusFilter || undefined,
+      transaction_type: (filters.transaction_type || undefined) as "buy" | "sell" | undefined,
+      source: (filters.source || undefined) as "scan" | "voice" | "manual" | undefined,
+      ht_min: toNum(filters.ht_min),
+      ht_max: toNum(filters.ht_max),
+      tva_min: toNum(filters.tva_min),
+      tva_max: toNum(filters.tva_max),
+      ttc_min: toNum(filters.ttc_min),
+      ttc_max: toNum(filters.ttc_max),
+      limit: 200,
+    };
+  }, [debouncedQ, filters, statusFilter]);
 
   const formatStatus = useCallback(
     (s: string) => {
@@ -92,8 +121,8 @@ export default function EmployeeInvoicesScreen() {
   );
 
   const { data: invoices, isLoading, error, refetch, isRefetching } = useQuery({
-    queryKey: queryKeys.invoicesMe,
-    queryFn: () => listMyInvoices({ limit: 100 }),
+    queryKey: queryKeys.invoicesMeFiltered(apiParams),
+    queryFn: () => listMyInvoices(apiParams),
   });
 
   const statusOptions = useMemo(() => {
@@ -102,20 +131,7 @@ export default function EmployeeInvoicesScreen() {
     return ["", ...Array.from(uniq).sort()];
   }, [invoices]);
 
-  const filteredInvoices = useMemo(() => {
-    let list = invoices ?? [];
-    if (statusFilter) list = list.filter((i) => i.status === statusFilter);
-    const q = query.trim().toLowerCase();
-    if (q) {
-      list = list.filter(
-        (i) =>
-          (i.supplier_name?.toLowerCase().includes(q) ?? false) ||
-          (i.invoice_number?.toLowerCase().includes(q) ?? false) ||
-          (i.employee_email?.toLowerCase().includes(q) ?? false)
-      );
-    }
-    return list;
-  }, [invoices, statusFilter, query]);
+  const filteredInvoices = useMemo(() => invoices ?? [], [invoices]);
 
   const errFmt = error ? formatApiError(error, t) : null;
 
@@ -124,10 +140,16 @@ export default function EmployeeInvoicesScreen() {
       <ProductBrandMark title={t("appName")} subtitle={t("myInvoices")} />
       <TextFieldInput
         value={query}
-        onChangeText={setQuery}
+        onChangeText={(v) => {
+          setQuery(v);
+          setFilters((prev) => ({ ...prev, q: v }));
+        }}
         placeholder={t("invoiceSearchPlaceholder")}
         accessibilityLabel={t("invoiceSearchPlaceholder")}
       />
+      <TouchableOpacity style={styles.filterBtn} onPress={() => setFilterVisible(true)}>
+        <Text style={styles.filterBtnText}>Filtres avancés</Text>
+      </TouchableOpacity>
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -203,29 +225,39 @@ export default function EmployeeInvoicesScreen() {
   }
 
   return (
-    <FlatList
-      data={filteredInvoices}
-      keyExtractor={(item) => item.id}
-      ListHeaderComponent={listHeader}
-      ListEmptyComponent={
-        <EmptyState icon="search-outline" title={t("noSearchResults")} subtitle={t("noSearchResultsHint")} />
-      }
-      contentContainerStyle={styles.list}
-      style={styles.container}
-      refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} />}
-      renderItem={({ item }) => (
-        <InvoiceRow
-          item={item}
-          formatStatus={formatStatus}
-          onPress={() =>
-            router.push({
-              pathname: "/invoice/[id]",
-              params: { id: item.id },
-            })
-          }
-        />
-      )}
-    />
+    <>
+      <FlatList
+        data={filteredInvoices}
+        keyExtractor={(item) => item.id}
+        ListHeaderComponent={listHeader}
+        ListEmptyComponent={
+          <EmptyState icon="search-outline" title={t("noSearchResults")} subtitle={t("noSearchResultsHint")} />
+        }
+        contentContainerStyle={styles.list}
+        style={styles.container}
+        refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} />}
+        renderItem={({ item }) => (
+          <InvoiceRow
+            item={item}
+            formatStatus={formatStatus}
+            onPress={() =>
+              router.push({
+                pathname: "/invoice/[id]",
+                params: { id: item.id },
+              })
+            }
+          />
+        )}
+      />
+      <FilterSheet
+        title="Filtres factures"
+        visible={filterVisible}
+        onClose={() => setFilterVisible(false)}
+        value={filters}
+        onApply={setFilters}
+        statusOptions={statusOptions.filter(Boolean)}
+      />
+    </>
   );
 }
 
@@ -247,6 +279,16 @@ const styles = StyleSheet.create({
   chipOn: { backgroundColor: colors.primaryMuted, borderColor: colors.primary },
   chipTxt: { fontSize: font.sm, fontWeight: font.semibold, color: colors.textSecondary },
   chipTxtOn: { color: colors.primaryDark },
+  filterBtn: {
+    alignSelf: "flex-start",
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.primary,
+    backgroundColor: colors.primaryMuted,
+    paddingHorizontal: space.md,
+    paddingVertical: space.xs + 2,
+  },
+  filterBtnText: { color: colors.primaryDark, fontWeight: font.semibold, fontSize: font.sm },
   rowWrap: { marginBottom: space.md },
   row: {
     backgroundColor: colors.surface,

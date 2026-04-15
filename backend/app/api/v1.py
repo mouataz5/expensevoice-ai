@@ -16,6 +16,8 @@ from app.api.auth import router as auth_router
 from app.api.confirm import router as confirm_router
 from app.api.dashboard import router as dashboard_router
 from app.api.extract import router as extract_router
+from app.api.farms import router as farms_router
+from app.api.farms import router as farms_router
 from app.api.policies import router as policies_router
 from app.api.policies_public import router as policies_public_router
 from app.api.policies_read import router as policies_read_router
@@ -78,7 +80,9 @@ router.include_router(stats_pdf_router)
 router.include_router(policies_router)
 router.include_router(policies_public_router)
 router.include_router(policies_read_router)
+router.include_router(farms_router)
 router.include_router(settings_router)
+router.include_router(farms_router)
 router.include_router(invoices_router)
 router.include_router(speech_router)
 

@@ -1,7 +1,7 @@
 from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import Date, cast, func, select
+from sqlalchemy import Date, cast, func, select, true
 from sqlalchemy.orm import Session
 
 from app.core.permissions import STATS_READ, require_permission
@@ -24,6 +24,7 @@ def get_stats(
     _user: User = require_permission(STATS_READ),
     from_date: date | None = Query(default=None, alias="from"),
     to_date: date | None = Query(default=None, alias="to"),
+    farm_id: str | None = Query(default=None),
 ):
     now = datetime.now(timezone.utc)
 
@@ -47,14 +48,22 @@ def get_stats(
     total_today_row = db.execute(
         select(func.coalesce(func.sum(Purchase.total_amount), 0))
         .select_from(Purchase)
-        .where(Purchase.created_at >= start_today, Purchase.is_deleted == False)
+        .where(
+            Purchase.created_at >= start_today,
+            Purchase.is_deleted == False,
+            Purchase.farm_id == farm_id if farm_id else true(),
+        )
     ).first()
     total_today = float(total_today_row[0]) if total_today_row else 0.0
 
     count_today_row = db.execute(
         select(func.count(Purchase.id))
         .select_from(Purchase)
-        .where(Purchase.created_at >= start_today, Purchase.is_deleted == False)
+        .where(
+            Purchase.created_at >= start_today,
+            Purchase.is_deleted == False,
+            Purchase.farm_id == farm_id if farm_id else true(),
+        )
     ).first()
     count_today = int(count_today_row[0]) if count_today_row else 0
 
@@ -66,6 +75,7 @@ def get_stats(
             Purchase.created_at >= start_dt,
             Purchase.created_at < end_dt,
             Purchase.is_deleted == False,
+            Purchase.farm_id == farm_id if farm_id else true(),
         )
     ).first()
     total_range = float(total_range_row[0]) if total_range_row else 0.0
@@ -77,6 +87,7 @@ def get_stats(
             Purchase.created_at >= start_dt,
             Purchase.created_at < end_dt,
             Purchase.is_deleted == False,
+            Purchase.farm_id == farm_id if farm_id else true(),
         )
     ).first()
     count_range = int(count_range_row[0]) if count_range_row else 0
@@ -95,6 +106,7 @@ def get_stats(
             Purchase.created_at >= start_dt,
             Purchase.created_at < end_dt,
             Purchase.is_deleted == False,
+            Purchase.farm_id == farm_id if farm_id else true(),
         )
         .group_by(Purchase.category)
         .order_by(func.coalesce(func.sum(Purchase.total_amount), 0).desc())
@@ -121,6 +133,7 @@ def get_stats(
             Purchase.created_at >= start_dt,
             Purchase.created_at < end_dt,
             Purchase.is_deleted == False,
+            Purchase.farm_id == farm_id if farm_id else true(),
         )
         .group_by(Purchase.user_id)
         .order_by(func.coalesce(func.sum(Purchase.total_amount), 0).desc())
@@ -161,6 +174,7 @@ def get_stats(
             Purchase.created_at >= start_dt,
             Purchase.created_at < end_dt,
             Purchase.is_deleted == False,
+            Purchase.farm_id == farm_id if farm_id else true(),
         )
         .group_by(cast(Purchase.created_at, Date))
         .order_by(cast(Purchase.created_at, Date).asc())

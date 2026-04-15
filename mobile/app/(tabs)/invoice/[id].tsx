@@ -6,6 +6,7 @@ import {
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
+  Image,
   Linking,
   Modal,
   TextInput,
@@ -34,6 +35,7 @@ import { AdminAccentStripe, AdminDecisionCard, AdminSectionLabel } from "../../.
 import {
   getInvoice,
   getInvoicePreview,
+  getInvoiceImageUrl,
   getInvoicePdfUrl,
   approveInvoice,
   rejectInvoice,
@@ -187,6 +189,8 @@ export default function InvoiceDetailScreen() {
   const [preview, setPreview] = useState<InvoicePreview | null>(null);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
+  const [imageOpen, setImageOpen] = useState(false);
+  const [authHeader, setAuthHeader] = useState<Record<string, string>>({});
 
   const formatStatus = useCallback(
     (s: string) => {
@@ -240,6 +244,13 @@ export default function InvoiceDetailScreen() {
       Toast.show({ type: "error", text1: t("error"), text2: message });
     },
   });
+
+  useEffect(() => {
+    void (async () => {
+      const token = await getStoredToken();
+      if (token) setAuthHeader({ Authorization: `Bearer ${token}` });
+    })();
+  }, []);
 
   useEffect(() => {
     if (!inv || !invoiceId) return;
@@ -420,6 +431,13 @@ export default function InvoiceDetailScreen() {
 
         <View style={[styles.actionsCard, isDirectorContext && styles.actionsCardAdmin]}>
           <Text style={styles.actionsTitle}>{t("invoiceDetailActions")}</Text>
+          {isDirectorContext ? (
+            <SecondaryButton
+              title={t("invoiceDetailViewImage")}
+              onPress={() => setImageOpen(true)}
+              icon="image-outline"
+            />
+          ) : null}
           {canPdf ? (
             <PrimaryButton title={t("downloadPdf")} onPress={() => void downloadPdf()} icon="document-attach-outline" />
           ) : (
@@ -438,6 +456,41 @@ export default function InvoiceDetailScreen() {
           />
         </View>
       </ScrollView>
+
+      <Modal visible={imageOpen} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.imageModalContent}>
+            <View style={styles.imageModalHeader}>
+              <Text style={styles.modalTitle}>{t("invoiceDetailViewImage")}</Text>
+              <TouchableOpacity onPress={() => setImageOpen(false)} accessibilityRole="button">
+                <Ionicons name="close" size={22} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+            <View style={styles.imageViewerWrap}>
+              <ScrollView
+                style={styles.imageScroll}
+                contentContainerStyle={styles.imageScrollContent}
+                maximumZoomScale={3}
+                minimumZoomScale={1}
+                showsHorizontalScrollIndicator={false}
+                showsVerticalScrollIndicator={false}
+              >
+                <View style={styles.imageFrame}>
+                  <View style={styles.imageAspectBox}>
+                    {/* We use auth header to consult protected original invoice image. */}
+                    <Image
+                      source={{ uri: getInvoiceImageUrl(invoiceId), headers: authHeader }}
+                      style={styles.invoiceImage}
+                      resizeMode="contain"
+                    />
+                  </View>
+                </View>
+              </ScrollView>
+            </View>
+            <SecondaryButton title={t("close")} onPress={() => setImageOpen(false)} />
+          </View>
+        </View>
+      </Modal>
 
       <Modal visible={rejectOpen} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
@@ -574,6 +627,31 @@ const styles = StyleSheet.create({
     borderRadius: radius.xl,
     padding: space.xl,
   },
+  imageModalContent: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.xl,
+    padding: space.lg,
+    maxHeight: "92%",
+    gap: space.md,
+  },
+  imageModalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  imageViewerWrap: {
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceMuted,
+    overflow: "hidden",
+    maxHeight: 520,
+  },
+  imageScroll: { width: "100%" },
+  imageScrollContent: { flexGrow: 1, justifyContent: "center", alignItems: "center" },
+  imageFrame: { width: "100%", minHeight: 360, justifyContent: "center", alignItems: "center" },
+  imageAspectBox: { width: "100%", aspectRatio: 0.75, maxHeight: 520 },
+  invoiceImage: { width: "100%", height: "100%" },
   modalTitle: { fontSize: font.lg, fontWeight: font.bold, color: colors.primaryDark, marginBottom: space.md },
   modalInput: {
     borderWidth: 1,

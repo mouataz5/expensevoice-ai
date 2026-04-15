@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Request, UploadFile
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import MAX_AUDIO_BYTES
@@ -13,6 +14,7 @@ from app.core.dependencies import get_current_user
 from app.core.rate_limit import limiter
 from app.db.deps import get_db
 from app.models.purchase import Purchase
+from app.models.farm import Farm
 from app.models.user import User
 from app.services.task_dispatcher import enqueue_voice_purchase_processing
 
@@ -57,6 +59,7 @@ async def record_purchase_voice(
     audio: UploadFile = File(...),
     language: str | None = Form(default=None),
     transaction_type: str | None = Form(default=None),  # "sell" | "buy"
+    farm_id: str | None = Form(default=None),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
@@ -72,6 +75,13 @@ async def record_purchase_voice(
     tt = (transaction_type or "buy").strip().lower()
     if tt not in ("sell", "buy"):
         tt = "buy"
+    if not farm_id:
+        raise HTTPException(status_code=422, detail="farm_id is required")
+    farm = db.execute(
+        select(Farm).where(Farm.id == farm_id, Farm.is_active == True)  # noqa: E712
+    ).scalar_one_or_none()
+    if not farm:
+        raise HTTPException(status_code=422, detail="Invalid farm_id")
 
     STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -97,6 +107,7 @@ async def record_purchase_voice(
 
     item = Purchase(
         user_id=user.id,
+        farm_id=farm.id,
         product_name="(from_voice)",
         category=None,
         quantity=1,

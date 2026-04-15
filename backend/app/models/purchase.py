@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -10,12 +10,22 @@ from app.db.base import Base
 
 class Purchase(Base):
     __tablename__ = "purchases"
+    __table_args__ = (
+        Index("ix_purchases_user_created", "user_id", "created_at"),
+        Index("ix_purchases_farm_created", "farm_id", "created_at"),
+        Index("ix_purchases_status_created", "status", "created_at"),
+        Index("ix_purchases_tx_created", "transaction_type", "created_at"),
+        Index("ix_purchases_total_amount", "total_amount"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
+    )
+    farm_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("farms.id"), nullable=True
     )
 
     product_name: Mapped[str] = mapped_column(

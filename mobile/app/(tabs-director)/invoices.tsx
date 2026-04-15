@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -27,6 +27,8 @@ import {
   StatusPill,
   TextFieldInput,
   invoiceStatusTone,
+  FilterSheet,
+  type ListFilterState,
 } from "../../src/components/ui";
 import { AdminAccentStripe, AdminErrorShell, AdminHeader } from "../../src/components/admin";
 import { formatApiError } from "../../src/utils/apiError";
@@ -36,8 +38,10 @@ import {
   rejectInvoice,
   fetchInvoicePdfBlob,
   type InvoiceListItem,
+  type InvoiceFilterParams,
 } from "../../src/api/invoices";
 import Toast from "react-native-toast-message";
+import { queryKeys } from "../../src/queryKeys";
 
 const STATUS_OPTIONS = [
   { value: "", labelKey: "invoiceStatusAll" },
@@ -145,6 +149,33 @@ export default function DirectorInvoicesScreen() {
   const qc = useQueryClient();
   const [statusFilter, setStatusFilter] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [filterVisible, setFilterVisible] = useState(false);
+  const [filters, setFilters] = useState<ListFilterState>({});
+  const [debouncedQ, setDebouncedQ] = useState("");
+  useEffect(() => {
+    const timer = setTimeout(
+      () => setDebouncedQ((filters.q ?? searchQuery ?? "").trim()),
+      300
+    );
+    return () => clearTimeout(timer);
+  }, [filters.q, searchQuery]);
+
+  const apiParams = useMemo<InvoiceFilterParams>(() => {
+    const toNum = (v?: string) => (v && v.trim() ? Number(v.replace(",", ".")) : undefined);
+    return {
+      q: debouncedQ || undefined,
+      status: filters.status || statusFilter || undefined,
+      transaction_type: (filters.transaction_type || undefined) as "buy" | "sell" | undefined,
+      source: (filters.source || undefined) as "scan" | "voice" | "manual" | undefined,
+      ht_min: toNum(filters.ht_min),
+      ht_max: toNum(filters.ht_max),
+      tva_min: toNum(filters.tva_min),
+      tva_max: toNum(filters.tva_max),
+      ttc_min: toNum(filters.ttc_min),
+      ttc_max: toNum(filters.ttc_max),
+      limit: 200,
+    };
+  }, [debouncedQ, filters, statusFilter]);
   const [rejectId, setRejectId] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState("");
 
@@ -164,19 +195,15 @@ export default function DirectorInvoicesScreen() {
   );
 
   const { data: invoices = [], isLoading, error, refetch, isRefetching } = useQuery({
-    queryKey: ["invoices-list", statusFilter],
-    queryFn: () =>
-      listInvoices({
-        status: statusFilter || undefined,
-        limit: 100,
-      }),
+    queryKey: queryKeys.invoicesAllFiltered(apiParams),
+    queryFn: () => listInvoices(apiParams),
   });
 
   const approveM = useMutation({
     mutationFn: (id: string) => approveInvoice(id),
     onSuccess: () => {
       Toast.show({ type: "success", text1: t("approveSuccess") });
-      void qc.invalidateQueries({ queryKey: ["invoices-list"] });
+      void qc.invalidateQueries({ queryKey: queryKeys.invoicesAllFiltered(apiParams) });
     },
     onError: (e: unknown) => {
       const { message } = formatApiError(e, t);
@@ -190,7 +217,7 @@ export default function DirectorInvoicesScreen() {
       Toast.show({ type: "success", text1: t("rejectSuccess") });
       setRejectId(null);
       setRejectReason("");
-      void qc.invalidateQueries({ queryKey: ["invoices-list"] });
+      void qc.invalidateQueries({ queryKey: queryKeys.invoicesAllFiltered(apiParams) });
     },
     onError: (e: unknown) => {
       const { message } = formatApiError(e, t);
@@ -224,16 +251,7 @@ export default function DirectorInvoicesScreen() {
     }
   };
 
-  const displayedInvoices = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    if (!q) return invoices;
-    return invoices.filter(
-      (i) =>
-        (i.supplier_name?.toLowerCase().includes(q) ?? false) ||
-        (i.invoice_number?.toLowerCase().includes(q) ?? false) ||
-        (i.employee_email?.toLowerCase().includes(q) ?? false)
-    );
-  }, [invoices, searchQuery]);
+  const displayedInvoices = useMemo(() => invoices, [invoices]);
 
   const errFmt = error ? formatApiError(error, t) : null;
 
@@ -264,10 +282,16 @@ export default function DirectorInvoicesScreen() {
       </ScrollView>
       <TextFieldInput
         value={searchQuery}
-        onChangeText={setSearchQuery}
+        onChangeText={(v) => {
+          setSearchQuery(v);
+          setFilters((prev) => ({ ...prev, q: v }));
+        }}
         placeholder={t("invoiceSearchPlaceholder")}
         accessibilityLabel={t("invoiceSearchPlaceholder")}
       />
+      <TouchableOpacity style={styles.filterBtn} onPress={() => setFilterVisible(true)}>
+        <Text style={styles.filterBtnText}>Filtres avancés</Text>
+      </TouchableOpacity>
     </View>
   );
 
@@ -343,6 +367,14 @@ export default function DirectorInvoicesScreen() {
           />
         )}
       />
+      <FilterSheet
+        title="Filtres factures"
+        visible={filterVisible}
+        onClose={() => setFilterVisible(false)}
+        value={filters}
+        onApply={setFilters}
+        statusOptions={STATUS_OPTIONS.map((s) => s.value).filter(Boolean)}
+      />
 
       <Modal visible={!!rejectId} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
@@ -407,6 +439,16 @@ const styles = StyleSheet.create({
   chipOn: { backgroundColor: colors.primaryMuted, borderColor: colors.primary },
   chipTxt: { fontSize: font.sm, fontWeight: font.semibold, color: colors.textSecondary },
   chipTxtOn: { color: colors.primaryDark },
+  filterBtn: {
+    alignSelf: "flex-start",
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.primary,
+    backgroundColor: colors.primaryMuted,
+    paddingHorizontal: space.md,
+    paddingVertical: space.xs + 2,
+  },
+  filterBtnText: { color: colors.primaryDark, fontWeight: font.semibold, fontSize: font.sm },
   rowWrap: { marginBottom: space.md },
   row: {
     backgroundColor: colors.surface,

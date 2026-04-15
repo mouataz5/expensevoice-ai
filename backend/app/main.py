@@ -19,13 +19,14 @@ try:
     from app.core.rate_limit import limiter
 except ImportError:
     limiter = None  # type: ignore
-from app.core.seed import seed_admin, seed_director, seed_employee, seed_policies, seed_settings
+from app.core.seed import seed_admin, seed_director, seed_employee, seed_farms, seed_policies, seed_settings
 from app.db.base import Base
 from app.db.session import SessionLocal, engine
 from app.middlewares.request_logging import RequestLoggingMiddleware
 from app.middlewares.security_headers import SecurityHeadersMiddleware
 from app.models.alert import Alert  # noqa: F401
 from app.models.audit_log import AuditLog  # noqa: F401
+from app.models.farm import Farm  # noqa: F401
 from app.models.invoice import Invoice  # noqa: F401
 from app.models.policy import Policy  # noqa: F401
 from app.models.purchase import Purchase  # noqa: F401
@@ -108,6 +109,19 @@ def startup():
                     pass
             # Invoice: pdf_path, denormalized list fields
             if "postgresql" in str(engine.url):
+                try:
+                    conn.execute(
+                        text(
+                            "CREATE TABLE IF NOT EXISTS farms ("
+                            "id UUID PRIMARY KEY, "
+                            "name VARCHAR(120) UNIQUE NOT NULL, "
+                            "is_active BOOLEAN NOT NULL DEFAULT true, "
+                            "created_at TIMESTAMP NOT NULL DEFAULT NOW())"
+                        )
+                    )
+                    conn.commit()
+                except Exception:
+                    pass
                 for col, col_type in [
                     ("pdf_path", "VARCHAR(500)"),
                     ("invoice_number", "VARCHAR(100)"),
@@ -120,7 +134,26 @@ def startup():
                         conn.commit()
                     except Exception:
                         pass
+                try:
+                    conn.execute(text("ALTER TABLE purchases ADD COLUMN IF NOT EXISTS farm_id UUID"))
+                    conn.execute(text("ALTER TABLE invoices ADD COLUMN IF NOT EXISTS farm_id UUID"))
+                    conn.commit()
+                except Exception:
+                    pass
             elif "sqlite" in str(engine.url):
+                try:
+                    conn.execute(
+                        text(
+                            "CREATE TABLE farms ("
+                            "id TEXT PRIMARY KEY, "
+                            "name VARCHAR(120) UNIQUE NOT NULL, "
+                            "is_active BOOLEAN NOT NULL DEFAULT 1, "
+                            "created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+                        )
+                    )
+                    conn.commit()
+                except Exception:
+                    pass
                 for col, col_type in [
                     ("pdf_path", "VARCHAR(500)"),
                     ("invoice_number", "VARCHAR(100)"),
@@ -133,6 +166,12 @@ def startup():
                         conn.commit()
                     except Exception:
                         pass
+                for table in ("purchases", "invoices"):
+                    try:
+                        conn.execute(text(f"ALTER TABLE {table} ADD COLUMN farm_id TEXT"))
+                        conn.commit()
+                    except Exception:
+                        pass
     except Exception:
         pass
 
@@ -141,6 +180,7 @@ def startup():
         seed_admin(db)
         seed_director(db)
         seed_employee(db)
+        seed_farms(db)
         seed_policies(db)
         seed_settings(db)
     finally:

@@ -3,6 +3,7 @@ import { getStoredToken } from "../lib/secure-store";
 
 export type InvoiceStatusOut = {
   id: string;
+  farm_id?: string | null;
   status: string;
   created_at: string;
   error_message?: string | null;
@@ -11,6 +12,7 @@ export type InvoiceStatusOut = {
 /** Extracted data for review before PDF download (GET /invoices/{id}/preview). */
 export type InvoicePreview = {
   id: string;
+  farm_id?: string | null;
   status: string;
   created_at: string;
   ocr_text: string;
@@ -83,7 +85,8 @@ export async function extractInvoiceSync(
 
 export async function scanInvoice(
   imageUri: string,
-  transactionType: "sell" | "buy"
+  transactionType: "sell" | "buy",
+  farmId: string
 ): Promise<{ invoice_id: string; status: string }> {
   const formData = new FormData();
   const filename = imageUri.split("/").pop() || "invoice.jpg";
@@ -93,6 +96,7 @@ export async function scanInvoice(
     name: filename,
   } as unknown as Blob);
   formData.append("transaction_type", transactionType);
+  formData.append("farm_id", farmId);
 
   const { data } = await api.post<{ invoice_id: string; status: string }>("/invoices/scan", formData, {
     timeout: 120_000,
@@ -109,30 +113,51 @@ export function getInvoicePdfUrl(id: string): string {
   return `${baseURL}/invoices/${id}/pdf`;
 }
 
+export function getInvoiceImageUrl(id: string): string {
+  return `${baseURL}/invoices/${id}/image`;
+}
+
 /** Admin/Director: list invoices (minimal fields). */
 export type InvoiceListItem = {
   id: string;
+  farm_id?: string | null;
   employee_email: string;
   invoice_number: string | null;
   supplier_name: string | null;
+  transaction_type?: "buy" | "sell" | null;
+  source?: "scan" | "voice" | "manual" | null;
+  total_ht?: number | null;
+  total_tva?: number | null;
   total_ttc: number | null;
   status: string;
   created_at: string;
 };
 
-export async function listInvoices(params?: {
+export type InvoiceFilterParams = {
+  q?: string;
   status?: string;
+  transaction_type?: "buy" | "sell";
+  source?: "scan" | "voice" | "manual";
+  farm_id?: string;
+  ht_min?: number;
+  ht_max?: number;
+  tva_min?: number;
+  tva_max?: number;
+  ttc_min?: number;
+  ttc_max?: number;
+  date_from?: string;
+  date_to?: string;
   limit?: number;
-}): Promise<InvoiceListItem[]> {
+  offset?: number;
+};
+
+export async function listInvoices(params?: InvoiceFilterParams): Promise<InvoiceListItem[]> {
   const { data } = await api.get<InvoiceListItem[]>("/invoices", { params });
   return data;
 }
 
 /** Current user's invoices (employee / director / admin); same shape as admin list. */
-export async function listMyInvoices(params?: {
-  status?: string;
-  limit?: number;
-}): Promise<InvoiceListItem[]> {
+export async function listMyInvoices(params?: InvoiceFilterParams): Promise<InvoiceListItem[]> {
   const { data } = await api.get<InvoiceListItem[]>("/invoices/me", { params });
   return data;
 }

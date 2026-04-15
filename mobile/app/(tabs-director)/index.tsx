@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { View, Text, StyleSheet, ScrollView, RefreshControl, Pressable } from "react-native";
 import { useRouter } from "expo-router";
@@ -8,6 +8,7 @@ import { colors } from "../../src/theme/colors";
 import { font, space } from "../../src/theme/tokens";
 import { api } from "../../src/api/client";
 import { listInvoices, type InvoiceListItem } from "../../src/api/invoices";
+import { listFarms } from "../../src/api/farms";
 import { listAllAlerts } from "../../src/api/alerts";
 import {
   Card,
@@ -44,21 +45,28 @@ function isPendingReview(status: string) {
 }
 
 export default function DirectorDashboardScreen() {
+  const [selectedFarmId, setSelectedFarmId] = useState<string>("");
   const { user } = useAuth();
   const { t } = useLocale();
   const router = useRouter();
 
   const statsQ = useQuery({
-    queryKey: ["dashboard-stats"],
+    queryKey: ["dashboard-stats", selectedFarmId || "all"],
     queryFn: async () => {
-      const { data: res } = await api.get<DashboardStats>("/dashboard/stats");
+      const { data: res } = await api.get<DashboardStats>("/dashboard/stats", {
+        params: selectedFarmId ? { farm_id: selectedFarmId } : undefined,
+      });
       return res;
     },
   });
 
   const invoicesQ = useQuery({
-    queryKey: ["invoices-list", ""],
-    queryFn: () => listInvoices({ limit: 100 }),
+    queryKey: ["invoices-list", selectedFarmId || "all"],
+    queryFn: () => listInvoices({ limit: 100, ...(selectedFarmId ? { farm_id: selectedFarmId } : {}) }),
+  });
+  const farmsQ = useQuery({
+    queryKey: ["farms"],
+    queryFn: listFarms,
   });
 
   const alertsQ = useQuery({
@@ -159,6 +167,25 @@ export default function DirectorDashboardScreen() {
       {user?.email ? <Text style={styles.email}>{user.email}</Text> : null}
 
       <AdminHeader eyebrow={t("adminEyebrow")} subtitle={t("directorDashboardSubtitle")} />
+      <View style={styles.farmRow}>
+        <Pressable
+          onPress={() => setSelectedFarmId("")}
+          style={[styles.farmChip, !selectedFarmId && styles.farmChipOn]}
+        >
+          <Text style={[styles.farmChipText, !selectedFarmId && styles.farmChipTextOn]}>Global</Text>
+        </Pressable>
+        {(farmsQ.data ?? []).map((farm) => (
+          <Pressable
+            key={farm.id}
+            onPress={() => setSelectedFarmId(farm.id)}
+            style={[styles.farmChip, selectedFarmId === farm.id && styles.farmChipOn]}
+          >
+            <Text style={[styles.farmChipText, selectedFarmId === farm.id && styles.farmChipTextOn]}>
+              {farm.name}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
 
       <AdminSectionLabel>{t("directorSectionAction")}</AdminSectionLabel>
       {listsLoading ? (
@@ -302,6 +329,18 @@ const styles = StyleSheet.create({
   avatarTap: { padding: space.xs, marginTop: 2, marginRight: -space.xs },
   avatarTapPressed: { opacity: 0.85 },
   email: { fontSize: font.sm, color: colors.textSecondary, marginBottom: space.sm, fontWeight: font.medium },
+  farmRow: { flexDirection: "row", flexWrap: "wrap", gap: space.xs, marginBottom: space.md },
+  farmChip: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 999,
+    paddingHorizontal: space.md,
+    paddingVertical: space.xs,
+    backgroundColor: colors.surface,
+  },
+  farmChipOn: { backgroundColor: colors.primary, borderColor: colors.primary },
+  farmChipText: { fontSize: font.xs, fontWeight: font.semibold, color: colors.textSecondary },
+  farmChipTextOn: { color: "#fff" },
   kpiRow: { flexDirection: "row", gap: space.sm, marginBottom: space.sm },
   toolsBlock: { marginBottom: space.md },
   recentBlock: { marginBottom: space.md },

@@ -5,6 +5,8 @@ import type { Locale } from "../i18n/translations";
 export type PurchaseOut = {
   id: string;
   user_id: string;
+  farm_id?: string | null;
+  farm_name?: string | null;
   product_name: string;
   category: string | null;
   quantity: number;
@@ -19,6 +21,11 @@ export type PurchaseOut = {
   extraction_confidence?: number | null;
   transcription?: string | null;
   audio_file_path?: string | null;
+  source?: "voice" | "manual" | "scan" | null;
+  total_ht?: number | null;
+  total_tva?: number | null;
+  total_ttc?: number | null;
+  is_tax_estimated?: boolean | null;
 };
 
 export type RecordResponse = {
@@ -41,15 +48,37 @@ export function sttLanguageFromLocale(_locale: Locale): string {
   return "auto";
 }
 
-export async function listMyPurchases(): Promise<PurchaseOut[]> {
-  const { data } = await api.get<PurchaseOut[]>("/purchases/me");
+export type PurchaseFilterParams = {
+  q?: string;
+  transaction_type?: "buy" | "sell";
+  status?: string;
+  source?: "voice" | "manual" | "scan";
+  farm_id?: string;
+  qty_min?: number;
+  qty_max?: number;
+  unit_price_min?: number;
+  unit_price_max?: number;
+  ht_min?: number;
+  ht_max?: number;
+  tva_min?: number;
+  tva_max?: number;
+  ttc_min?: number;
+  ttc_max?: number;
+  date_from?: string;
+  date_to?: string;
+  limit?: number;
+  offset?: number;
+};
+
+export async function listMyPurchases(params?: PurchaseFilterParams): Promise<PurchaseOut[]> {
+  const { data } = await api.get<PurchaseOut[]>("/purchases/me", { params });
   return data;
 }
 
 export type PurchaseAllOut = PurchaseOut & { employee_email?: string };
 
-export async function listAllPurchases(): Promise<PurchaseAllOut[]> {
-  const { data } = await api.get<PurchaseAllOut[]>("/purchases/all");
+export async function listAllPurchases(params?: PurchaseFilterParams): Promise<PurchaseAllOut[]> {
+  const { data } = await api.get<PurchaseAllOut[]>("/purchases/all", { params });
   return data;
 }
 
@@ -107,7 +136,7 @@ export function isVoicePipelineReady(p: Pick<PurchaseOut, "status" | "processing
 export async function uploadVoice(
   audioUri: string,
   transactionType: "sell" | "buy",
-  options?: { language?: string }
+  options?: { language?: string; farm_id?: string }
 ): Promise<RecordResponse> {
   const formData = new FormData();
   const filename = audioUri.split("/").pop() || "recording.m4a";
@@ -119,6 +148,9 @@ export async function uploadVoice(
     name: filename,
   } as unknown as Blob);
   formData.append("transaction_type", transactionType);
+  if (options?.farm_id) {
+    formData.append("farm_id", options.farm_id);
+  }
   if (options?.language) {
     formData.append("language", options.language);
   }

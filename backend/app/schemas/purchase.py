@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 
 class PurchaseCreate(BaseModel):
+    farm_id: uuid.UUID | None = None
     product_name: str
     category: Optional[str] = None
     quantity: int = Field(default=1, ge=1)
@@ -16,6 +17,8 @@ class PurchaseCreate(BaseModel):
 class PurchaseOut(BaseModel):
     id: uuid.UUID
     user_id: uuid.UUID
+    farm_id: uuid.UUID | None = None
+    farm_name: str | None = None
     product_name: str
     category: Optional[str] = None
     quantity: int
@@ -31,6 +34,12 @@ class PurchaseOut(BaseModel):
     extraction_confidence: Optional[float] = None
     transcription: Optional[str] = None
     audio_file_path: Optional[str] = None
+    source: Optional[str] = None
+    total_ht: Optional[float] = None
+    total_tva: Optional[float] = None
+    total_ttc: Optional[float] = None
+    is_tax_estimated: Optional[bool] = None
+    employee_email: Optional[str] = None
 
     model_config = {"from_attributes": True}
 

@@ -8,7 +8,9 @@ from app.core.policy_defaults import (
     get_default_limits_policy,
 )
 from app.core.security import hash_password
+from app.models.farm import Farm
 from app.models.policy import Policy
+from app.models.farm import Farm
 from app.models.setting import Setting
 from app.models.user import User
 
@@ -103,3 +105,37 @@ def seed_settings(db: Session):
         )
     )
     db.commit()
+
+
+def seed_farms(db: Session):
+    """Create default farms when none exist."""
+    existing = db.execute(select(Farm)).scalars().first()
+    if existing:
+        return
+    defaults = [
+        "Farm 1",
+        "Farm 2",
+        "Farm 3",
+        "Farm 4",
+    ]
+    for name in defaults:
+        db.add(Farm(name=name, is_active=True))
+    db.commit()
+
+
+def seed_farms(db: Session):
+    """Seed a default list of farms if missing."""
+    raw = os.getenv("SEED_FARM_NAMES", "Farm 1,Farm 2,Farm 3")
+    names = [name.strip() for name in raw.split(",") if name.strip()]
+    if not names:
+        names = ["Farm 1"]
+    existing = db.execute(select(Farm.name)).all()
+    existing_names = {row[0] for row in existing}
+    created = False
+    for name in names:
+        if name in existing_names:
+            continue
+        db.add(Farm(name=name, is_active=True))
+        created = True
+    if created:
+        db.commit()

@@ -14,6 +14,7 @@ class InvoiceScanResponse(BaseModel):
 class InvoiceStatusOut(BaseModel):
     """Minimal response for polling (employee)."""
     id: str
+    farm_id: str | None = None
     status: str
     created_at: datetime
     error_message: str | None
@@ -22,10 +23,17 @@ class InvoiceStatusOut(BaseModel):
 class InvoiceListItem(BaseModel):
     """Minimal list item for admin/director (no extracted JSON)."""
     id: str
+    farm_id: str | None = None
     employee_email: str
+    farm_id: str | None = None
+    farm_name: str | None = None
     invoice_number: str | None
     supplier_name: str | None
     total_ttc: float | None
+    total_ht: float | None = None
+    total_tva: float | None = None
+    transaction_type: str | None = None
+    source: str | None = None
     status: str
     created_at: datetime
 
@@ -44,6 +52,7 @@ def invoice_to_status_out(inv: Any, *, error_message: bool = True) -> dict:
     """Minimal output for GET by id (polling / status)."""
     out = {
         "id": str(inv.id),
+        "farm_id": str(inv.farm_id) if getattr(inv, "farm_id", None) else None,
         "status": inv.status,
         "created_at": inv.created_at,
     }
@@ -98,6 +107,7 @@ def invoice_to_preview(inv: Any) -> dict:
 
     return {
         "id": str(inv.id),
+        "farm_id": str(inv.farm_id) if getattr(inv, "farm_id", None) else None,
         "status": inv.status,
         "created_at": inv.created_at,
         "ocr_text": ocr_out,
@@ -124,11 +134,20 @@ def invoice_to_preview(inv: Any) -> dict:
 
 def invoice_to_list_item(inv: Any, employee_email: str) -> dict:
     """Minimal output for GET list (admin)."""
+    extraction = dict(inv.extracted_json or {})
+    totals = extraction.get("totals") or {}
     return {
         "id": str(inv.id),
+        "farm_id": str(inv.farm_id) if getattr(inv, "farm_id", None) else None,
         "employee_email": employee_email,
+        "farm_id": str(inv.farm_id) if getattr(inv, "farm_id", None) else None,
+        "farm_name": getattr(inv, "farm_name", None),
         "invoice_number": inv.invoice_number,
         "supplier_name": inv.supplier_name,
+        "transaction_type": inv.transaction_type,
+        "source": "scan",
+        "total_ht": float(totals.get("htva")) if totals.get("htva") is not None else None,
+        "total_tva": float(totals.get("tva")) if totals.get("tva") is not None else None,
         "total_ttc": float(inv.total_ttc) if inv.total_ttc is not None else None,
         "status": inv.status,
         "created_at": inv.created_at,

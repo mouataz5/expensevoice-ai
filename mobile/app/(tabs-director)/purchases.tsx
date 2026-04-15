@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   View,
@@ -7,6 +7,7 @@ import {
   SectionList,
   ScrollView,
   RefreshControl,
+  TouchableOpacity,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocale } from "../../src/context/LocaleContext";
@@ -27,6 +28,8 @@ import {
   ProductBrandMark,
   PrimaryButton,
   GhostButton,
+  FilterSheet,
+  type ListFilterState,
 } from "../../src/components/ui";
 import {
   AdminAccentStripe,
@@ -132,9 +135,40 @@ function PurchaseRow({
 export default function DirectorPurchasesScreen() {
   const { t } = useLocale();
   const qc = useQueryClient();
+  const [filterVisible, setFilterVisible] = useState(false);
+  const [filters, setFilters] = useState<ListFilterState>({});
+  const [debouncedQ, setDebouncedQ] = useState("");
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedQ((filters.q ?? "").trim()), 300);
+    return () => clearTimeout(timer);
+  }, [filters.q]);
+
+  const apiParams = useMemo(() => {
+    const toNum = (v?: string) => (v && v.trim() ? Number(v.replace(",", ".")) : undefined);
+    const toInt = (v?: string) => (v && v.trim() ? Number.parseInt(v, 10) : undefined);
+    return {
+      q: debouncedQ || undefined,
+      transaction_type: filters.transaction_type || undefined,
+      status: filters.status || undefined,
+      source: filters.source || undefined,
+      qty_min: toInt(filters.qty_min),
+      qty_max: toInt(filters.qty_max),
+      unit_price_min: toNum(filters.unit_price_min),
+      unit_price_max: toNum(filters.unit_price_max),
+      ht_min: toNum(filters.ht_min),
+      ht_max: toNum(filters.ht_max),
+      tva_min: toNum(filters.tva_min),
+      tva_max: toNum(filters.tva_max),
+      ttc_min: toNum(filters.ttc_min),
+      ttc_max: toNum(filters.ttc_max),
+      limit: 200,
+    };
+  }, [debouncedQ, filters]);
+
+  const hasActiveFilters = Object.values(filters).some((v) => !!v);
   const { data: purchases, isLoading, error, refetch, isRefetching } = useQuery({
-    queryKey: queryKeys.purchasesAll,
-    queryFn: listAllPurchases,
+    queryKey: queryKeys.purchasesAllFiltered(apiParams),
+    queryFn: () => listAllPurchases(apiParams),
   });
 
   const approveM = useMutation({
@@ -142,6 +176,7 @@ export default function DirectorPurchasesScreen() {
     onSuccess: () => {
       Toast.show({ type: "success", text1: t("purchaseApproved") });
       void qc.invalidateQueries({ queryKey: queryKeys.purchasesAll });
+      void qc.invalidateQueries({ queryKey: queryKeys.purchasesAllFiltered(apiParams) });
     },
     onError: (e) => {
       const { message } = formatApiError(e, t);
@@ -154,6 +189,7 @@ export default function DirectorPurchasesScreen() {
     onSuccess: () => {
       Toast.show({ type: "info", text1: t("purchaseRejected") });
       void qc.invalidateQueries({ queryKey: queryKeys.purchasesAll });
+      void qc.invalidateQueries({ queryKey: queryKeys.purchasesAllFiltered(apiParams) });
     },
     onError: (e) => {
       const { message } = formatApiError(e, t);
@@ -197,6 +233,11 @@ export default function DirectorPurchasesScreen() {
           <AdminAccentStripe />
           <ProductBrandMark title={t("appName")} subtitle={t("myPurchases")} />
           <AdminHeader eyebrow={t("adminEyebrow")} subtitle={t("adminPurchasesSubtitle")} />
+          <TouchableOpacity style={styles.filterBtn} onPress={() => setFilterVisible(true)}>
+            <Text style={styles.filterBtnText}>
+              {hasActiveFilters ? "Filtres actifs" : "Filtres"}
+            </Text>
+          </TouchableOpacity>
         </View>
         <InvoiceListSkeleton count={6} />
       </View>
@@ -219,63 +260,95 @@ export default function DirectorPurchasesScreen() {
 
   if (!purchases?.length) {
     return (
-      <ScrollView
-        style={styles.container}
-        contentContainerStyle={[styles.list, styles.listFlex]}
-        refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} />}
-      >
-        <View style={styles.headerPad}>
-          <AdminAccentStripe />
-          <ProductBrandMark title={t("appName")} subtitle={t("myPurchases")} />
-          <AdminHeader eyebrow={t("adminEyebrow")} subtitle={t("adminPurchasesSubtitle")} />
-        </View>
-        <EmptyState
-          icon="cart-outline"
-          title={t("adminNoPurchases")}
-          subtitle={t("adminNoPurchasesBody")}
+      <>
+        <ScrollView
+          style={styles.container}
+          contentContainerStyle={[styles.list, styles.listFlex]}
+          refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} />}
+        >
+          <View style={styles.headerPad}>
+            <AdminAccentStripe />
+            <ProductBrandMark title={t("appName")} subtitle={t("myPurchases")} />
+            <AdminHeader eyebrow={t("adminEyebrow")} subtitle={t("adminPurchasesSubtitle")} />
+            <TouchableOpacity style={styles.filterBtn} onPress={() => setFilterVisible(true)}>
+              <Text style={styles.filterBtnText}>
+                {hasActiveFilters ? "Filtres actifs" : "Filtres"}
+              </Text>
+            </TouchableOpacity>
+          </View>
+          <EmptyState
+            icon="cart-outline"
+            title={t("adminNoPurchases")}
+            subtitle={t("adminNoPurchasesBody")}
+          />
+        </ScrollView>
+        <FilterSheet
+          title="Filtres achats"
+          visible={filterVisible}
+          onClose={() => setFilterVisible(false)}
+          value={filters}
+          onApply={setFilters}
+          allowQuantity
+          statusOptions={[]}
         />
-      </ScrollView>
+      </>
     );
   }
 
   return (
-    <SectionList
-      sections={sections}
-      keyExtractor={(item) => item.id}
-      renderSectionHeader={({ section: { title } }) => (
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>{title}</Text>
-        </View>
-      )}
-      renderItem={({ item }) => (
-        <PurchaseRow
-          item={item}
-          t={t}
-          onApprove={() => approveM.mutate(item.id)}
-          onReject={() => rejectM.mutate(item.id)}
-          approving={approveM.isPending && approveM.variables === item.id}
-          rejecting={rejectM.isPending && rejectM.variables === item.id}
-        />
-      )}
-      ListHeaderComponent={
-        <View style={styles.headerPad}>
-          <AdminAccentStripe />
-          <ProductBrandMark title={t("appName")} subtitle={t("myPurchases")} />
-          <AdminHeader
-            eyebrow={t("adminEyebrow")}
-            subtitle={
-              pendingCount > 0
-                ? `${pendingCount} ${t("pendingApproval").toLowerCase()}`
-                : t("adminPurchasesSubtitle")
-            }
+    <>
+      <SectionList
+        sections={sections}
+        keyExtractor={(item) => item.id}
+        renderSectionHeader={({ section: { title } }) => (
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>{title}</Text>
+          </View>
+        )}
+        renderItem={({ item }) => (
+          <PurchaseRow
+            item={item}
+            t={t}
+            onApprove={() => approveM.mutate(item.id)}
+            onReject={() => rejectM.mutate(item.id)}
+            approving={approveM.isPending && approveM.variables === item.id}
+            rejecting={rejectM.isPending && rejectM.variables === item.id}
           />
-        </View>
-      }
-      contentContainerStyle={styles.list}
-      style={styles.container}
-      stickySectionHeadersEnabled={false}
-      refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} />}
-    />
+        )}
+        ListHeaderComponent={
+          <View style={styles.headerPad}>
+            <AdminAccentStripe />
+            <ProductBrandMark title={t("appName")} subtitle={t("myPurchases")} />
+            <AdminHeader
+              eyebrow={t("adminEyebrow")}
+              subtitle={
+                pendingCount > 0
+                  ? `${pendingCount} ${t("pendingApproval").toLowerCase()}`
+                  : t("adminPurchasesSubtitle")
+              }
+            />
+            <TouchableOpacity style={styles.filterBtn} onPress={() => setFilterVisible(true)}>
+              <Text style={styles.filterBtnText}>
+                {hasActiveFilters ? "Filtres actifs" : "Filtres"}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        }
+        contentContainerStyle={styles.list}
+        style={styles.container}
+        stickySectionHeadersEnabled={false}
+        refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} />}
+      />
+      <FilterSheet
+        title="Filtres achats"
+        visible={filterVisible}
+        onClose={() => setFilterVisible(false)}
+        value={filters}
+        onApply={setFilters}
+        allowQuantity
+        statusOptions={Array.from(new Set((purchases ?? []).map((p) => p.status).filter(Boolean)))}
+      />
+    </>
   );
 }
 
@@ -341,4 +414,14 @@ const styles = StyleSheet.create({
     borderTopColor: colors.border,
   },
   actionBtn: { flex: 1 },
+  filterBtn: {
+    alignSelf: "flex-start",
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.primary,
+    backgroundColor: colors.primaryMuted,
+    paddingHorizontal: space.md,
+    paddingVertical: space.xs + 2,
+  },
+  filterBtnText: { color: colors.primaryDark, fontWeight: font.semibold, fontSize: font.sm },
 });
