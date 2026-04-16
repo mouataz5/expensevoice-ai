@@ -4,7 +4,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.policy_defaults import (
+    get_default_approval_workflow_policy,
     get_default_categories_policy,
+    get_default_finance_taxonomy_policy,
     get_default_limits_policy,
 )
 from app.core.security import hash_password
@@ -59,6 +61,14 @@ def seed_employee(db: Session):
         seed_user_if_not_exists(db, email, password, role)
 
 
+def seed_accountant(db: Session):
+    email = os.getenv("SEED_ACCOUNTANT_EMAIL", "accountant@company.com")
+    password = os.getenv("SEED_ACCOUNTANT_PASSWORD", "Accountant12345!")
+    role = os.getenv("SEED_ACCOUNTANT_ROLE", "accountant")
+    if email and password:
+        seed_user_if_not_exists(db, email, password, role)
+
+
 def seed_policies(db: Session):
     existing_limits = db.execute(
         select(Policy).where(Policy.policy_type == "limits")
@@ -83,6 +93,32 @@ def seed_policies(db: Session):
             Policy(
                 policy_type="categories",
                 rule=get_default_categories_policy(),
+                is_active=True,
+            )
+        )
+        db.commit()
+
+    existing_taxonomy = db.execute(
+        select(Policy).where(Policy.policy_type == "finance_taxonomy")
+    ).scalar_one_or_none()
+    if not existing_taxonomy:
+        db.add(
+            Policy(
+                policy_type="finance_taxonomy",
+                rule=get_default_finance_taxonomy_policy(),
+                is_active=True,
+            )
+        )
+        db.commit()
+
+    existing_approval = db.execute(
+        select(Policy).where(Policy.policy_type == "approval_workflow")
+    ).scalar_one_or_none()
+    if not existing_approval:
+        db.add(
+            Policy(
+                policy_type="approval_workflow",
+                rule=get_default_approval_workflow_policy(),
                 is_active=True,
             )
         )

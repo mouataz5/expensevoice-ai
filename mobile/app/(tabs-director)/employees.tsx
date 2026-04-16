@@ -40,7 +40,7 @@ import {
 import { AdminAccentStripe, AdminErrorShell, AdminHeader } from "../../src/components/admin";
 import { formatApiError } from "../../src/utils/apiError";
 
-const ROLES = ["employee", "director", "admin"] as const;
+const ROLES = ["employee", "accountant", "director", "admin"] as const;
 
 export default function DirectorEmployeesScreen() {
   const { user } = useAuth();
@@ -343,6 +343,8 @@ function UserRow({
         ? t("roleDirector")
         : item.role === "employee"
           ? t("roleEmployee")
+          : item.role === "accountant"
+            ? t("roleAccountant")
           : item.role;
 
   return (

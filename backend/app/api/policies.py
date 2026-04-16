@@ -7,7 +7,9 @@ from app.db.deps import get_db
 from app.models.policy import Policy
 from app.models.user import User
 from app.schemas.policy import (
+    ApprovalWorkflowRule,
     CategoriesRule,
+    FinanceTaxonomyRule,
     LimitsRule,
     PolicyOut,
     PolicyUpdate,
@@ -62,6 +64,12 @@ def update_policy(
         p.rule = validated
     elif policy_type == "categories":
         validated = CategoriesRule(**payload.rule).model_dump()
+        p.rule = validated
+    elif policy_type == "finance_taxonomy":
+        validated = FinanceTaxonomyRule(**payload.rule).model_dump()
+        p.rule = validated
+    elif policy_type == "approval_workflow":
+        validated = ApprovalWorkflowRule(**payload.rule).model_dump()
         p.rule = validated
     else:
         raise HTTPException(

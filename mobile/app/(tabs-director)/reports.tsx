@@ -73,6 +73,11 @@ export default function DirectorReportsScreen() {
             onPress={() => void downloadReport("/export/audit.csv", "audit.csv")}
             icon="reader-outline"
           />
+          <SecondaryButton
+            title={t("directorReportFinanceCsv")}
+            onPress={() => void downloadReport("/dashboard/finance-report.csv", "finance-report.csv")}
+            icon="cash-outline"
+          />
         </Card>
       </View>
     </View>

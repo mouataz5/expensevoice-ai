@@ -48,6 +48,18 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         SETTINGS_READ,
         USERS_READ,  # dashboard users-map
     },
+    "accountant": {
+        STATS_READ,
+        ALERTS_READ,
+        AUDIT_READ,
+        EXPORT_READ,
+        PURCHASES_READ_OWN,
+        PURCHASES_READ_ALL,
+        PURCHASES_CONFIRM,
+        POLICIES_READ,
+        SETTINGS_READ,
+        USERS_READ,
+    },
     "admin": {
         STATS_READ,
         ALERTS_READ,

@@ -9,12 +9,20 @@ from app.core.permissions import PURCHASES_READ_ALL, require_permission
 from app.core.rate_limit import limiter
 from app.db.deps import get_db
 from app.models.purchase import Purchase
+from app.models.policy import Policy
 from app.models.user import User
 from app.schemas.purchase import PurchaseConfirm
 from app.services.audit import audit_log
 from app.services.rules import evaluate_rules_and_create_alerts, get_allowed_categories
 
 router = APIRouter(prefix="/purchases", tags=["confirm"])
+
+
+def _approval_workflow(db: Session) -> dict:
+    p = db.execute(
+        select(Policy).where(Policy.policy_type == "approval_workflow", Policy.is_active == True)  # noqa: E712
+    ).scalar_one_or_none()
+    return p.rule if p and isinstance(p.rule, dict) else {}
 
 
 @router.post("/{purchase_id}/confirm")
@@ -55,7 +63,9 @@ def confirm_purchase(
     purchase.quantity = qty
     purchase.unit_price = unit
     purchase.total_amount = server_total
-    purchase.status = "pending_approval"
+    workflow = _approval_workflow(db)
+    require_admin_approval = bool(workflow.get("require_admin_approval", True))
+    purchase.status = "pending_approval" if require_admin_approval else "approved"
     if getattr(purchase, "processing_status", None):
         purchase.processing_status = "confirmed"
 

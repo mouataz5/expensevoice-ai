@@ -41,7 +41,7 @@ def create_user(
     ).scalar_one_or_none()
     if existing:
         raise HTTPException(status_code=409, detail="Email already exists")
-    if payload.role not in ("employee", "director", "admin"):
+    if payload.role not in ("employee", "director", "accountant", "admin"):
         raise HTTPException(status_code=400, detail="Invalid role")
     user = User(
         email=payload.email,
@@ -67,7 +67,7 @@ def update_user(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     if payload.role is not None:
-        if payload.role not in ("employee", "director", "admin"):
+        if payload.role not in ("employee", "director", "accountant", "admin"):
             raise HTTPException(status_code=400, detail="Invalid role")
         user.role = payload.role
     if payload.is_active is not None:

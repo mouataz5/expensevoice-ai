@@ -19,13 +19,13 @@ import {
   uploadVoice,
   getPurchase,
   confirmPurchase,
+  createPurchase,
   listMyPurchases,
   isVoicePipelineReady,
   sttLanguageFromLocale,
   type PurchaseOut,
 } from "../../src/api/purchases";
 import { queryKeys } from "../../src/queryKeys";
-import { fetchAllowedCategories } from "../../src/api/categories-public";
 import { listFarms } from "../../src/api/farms";
 import Toast from "react-native-toast-message";
 import {
@@ -52,6 +52,14 @@ const SILENCE_THRESHOLD_DB = -38;
 const SILENCE_AUTO_STOP_MS = 3000;
 const MIN_RECORD_MS = 1500;
 const NUM_BARS = 24;
+const BUY_CATEGORY_OPTIONS = [
+  "charge_variable_electricite",
+  "charge_variable_eau",
+  "charge_variable_gaz",
+  "charge_fixe_location",
+  "achat_aliment",
+] as const;
+const SELL_PRODUCT_OPTIONS = ["nourriture", "poussins"] as const;
 
 const RECORDING_OPTS = {
   ...RecordingPresets.HIGH_QUALITY,
@@ -164,6 +172,7 @@ export default function RecordScreen() {
   const queryClient = useQueryClient();
 
   const [txType, setTxType] = useState<TxType>("buy");
+  const [entryMode, setEntryMode] = useState<"voice" | "manual">("voice");
   const recorder = useAudioRecorder(RECORDING_OPTS);
   const recorderState = useAudioRecorderState(recorder, 150);
   const isRecording = recorderState.isRecording;
@@ -183,11 +192,9 @@ export default function RecordScreen() {
   const [selectField, setSelectField] = useState<SelectField | null>(null);
   const [selectSearch, setSelectSearch] = useState("");
   const [selectedFarmId, setSelectedFarmId] = useState("");
+  const [customProductOptions, setCustomProductOptions] = useState<string[]>([]);
+  const [customCategoryOptions, setCustomCategoryOptions] = useState<string[]>([]);
 
-  const { data: allowedCategories = [] } = useQuery({
-    queryKey: queryKeys.allowedCategories,
-    queryFn: fetchAllowedCategories,
-  });
   const { data: recentPurchases = [] } = useQuery({
     queryKey: queryKeys.purchasesMeFiltered({ limit: 100 }),
     queryFn: () => listMyPurchases({ limit: 100 }),
@@ -200,32 +207,41 @@ export default function RecordScreen() {
     () => farms.find((f) => f.id === selectedFarmId)?.name ?? "",
     [farms, selectedFarmId]
   );
+  const optionLabel = useCallback((value: string) => {
+    const map: Record<string, string> = {
+      charge_variable_electricite: "Facture d'electricite",
+      charge_variable_eau: "Facture d'eau",
+      charge_variable_gaz: "Facture de gaz",
+      charge_fixe_location: "Location",
+      achat_aliment: "Nourriture",
+      nourriture: "Nourriture",
+      poussins: "Poussins",
+    };
+    return map[value] ?? value;
+  }, []);
 
   const productOptions = useMemo(() => {
+    if (txType === "sell") {
+      return Array.from(new Set([...SELL_PRODUCT_OPTIONS, ...customProductOptions])).sort((a, b) => a.localeCompare(b));
+    }
     const set = new Set<string>();
     for (const p of recentPurchases) {
       const v = (p.product_name || "").trim();
       if (v) set.add(v);
     }
+    set.add("nourriture");
     const reviewValue = (review?.product_name || "").trim();
     if (reviewValue) set.add(reviewValue);
+    for (const v of customProductOptions) set.add(v);
     return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }, [recentPurchases, review?.product_name]);
+  }, [recentPurchases, review?.product_name, txType, customProductOptions]);
 
   const categoryOptions = useMemo(() => {
-    const set = new Set<string>();
-    for (const c of allowedCategories) {
-      const v = (c || "").trim();
-      if (v) set.add(v);
+    if (txType === "buy") {
+      return Array.from(new Set([...BUY_CATEGORY_OPTIONS, ...customCategoryOptions])).sort((a, b) => a.localeCompare(b));
     }
-    for (const p of recentPurchases) {
-      const v = (p.category || "").trim();
-      if (v) set.add(v);
-    }
-    const reviewValue = (review?.category || "").trim();
-    if (reviewValue) set.add(reviewValue);
-    return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }, [allowedCategories, recentPurchases, review?.category]);
+    return [];
+  }, [txType, customCategoryOptions]);
 
   const currentOptions = useMemo(() => {
     const base =
@@ -236,8 +252,19 @@ export default function RecordScreen() {
           : productOptions;
     const q = selectSearch.trim().toLowerCase();
     if (!q) return base;
-    return base.filter((v) => v.toLowerCase().includes(q));
-  }, [selectField, categoryOptions, productOptions, farms, selectSearch]);
+    return base.filter((v) => optionLabel(v).toLowerCase().includes(q) || v.toLowerCase().includes(q));
+  }, [selectField, categoryOptions, productOptions, farms, selectSearch, optionLabel]);
+
+  useEffect(() => {
+    if (txType === "sell") {
+      setForm((f) => ({
+        ...f,
+        category: "",
+      }));
+      return;
+    }
+    setForm((f) => ({ ...f }));
+  }, [txType]);
 
   const openSelector = useCallback((field: SelectField) => {
     setSelectField(field);
@@ -262,6 +289,35 @@ export default function RecordScreen() {
     },
     [selectField, closeSelector, farms]
   );
+
+  const addCustomOption = useCallback(() => {
+    const value = selectSearch.trim();
+    if (!value || !selectField || selectField === "farm") return;
+    if (selectField === "category") {
+      setCustomCategoryOptions((prev) => (prev.includes(value) ? prev : [...prev, value]));
+    } else {
+      setCustomProductOptions((prev) => (prev.includes(value) ? prev : [...prev, value]));
+    }
+    applySelection(value);
+  }, [selectField, selectSearch, applySelection]);
+
+  const removeCustomOption = useCallback((value: string) => {
+    if (selectField === "category") {
+      setCustomCategoryOptions((prev) => prev.filter((v) => v !== value));
+      setForm((f) => (f.category === value ? { ...f, category: "" } : f));
+      return;
+    }
+    if (selectField === "product_name") {
+      setCustomProductOptions((prev) => prev.filter((v) => v !== value));
+      setForm((f) => (f.product_name === value ? { ...f, product_name: "" } : f));
+    }
+  }, [selectField]);
+
+  const isCustomOption = useCallback((value: string): boolean => {
+    if (selectField === "category") return customCategoryOptions.includes(value);
+    if (selectField === "product_name") return customProductOptions.includes(value);
+    return false;
+  }, [selectField, customCategoryOptions, customProductOptions]);
 
   const silenceStartRef = useRef<number | null>(null);
   const [silenceCountdown, setSilenceCountdown] = useState(SILENCE_AUTO_STOP_MS);
@@ -375,20 +431,42 @@ export default function RecordScreen() {
     }
   }, [recorder, txType, locale, t, selectedFarmId]);
 
-  const handleConfirm = useCallback(async () => {
-    if (!review) return;
+  const handleSubmit = useCallback(async () => {
     const qty = parseInt(form.quantity, 10) || 1;
     const up = parseFloat(String(form.unit_price).replace(",", ".")) || 0;
     const totalParsed = parseFloat(String(form.total_amount).replace(",", "."));
     const total = Number.isFinite(totalParsed) && totalParsed >= 0 ? totalParsed : qty * up;
+    if (!selectedFarmId) {
+      Toast.show({ type: "error", text1: t("error"), text2: "Choisissez une ferme." });
+      return;
+    }
+    if (!form.product_name.trim()) {
+      Toast.show({ type: "error", text1: t("error"), text2: "Choisissez un produit." });
+      return;
+    }
+    if (txType === "buy" && !form.category.trim()) {
+      Toast.show({ type: "error", text1: t("error"), text2: "Choisissez une categorie." });
+      return;
+    }
     try {
-      await confirmPurchase(review.id, {
-        product_name: form.product_name || "—",
-        category: form.category || null,
-        quantity: qty,
-        unit_price: up,
-        total_amount: total,
-      });
+      if (review) {
+        await confirmPurchase(review.id, {
+          product_name: form.product_name || "—",
+          category: txType === "buy" ? form.category || null : null,
+          quantity: qty,
+          unit_price: up,
+          total_amount: total,
+        });
+      } else {
+        await createPurchase({
+          farm_id: selectedFarmId,
+          transaction_type: txType,
+          product_name: form.product_name || "—",
+          category: txType === "buy" ? form.category || null : null,
+          quantity: qty,
+          unit_price: up,
+        });
+      }
       setReview(null);
       await queryClient.invalidateQueries({ queryKey: queryKeys.purchasesMe });
       await queryClient.invalidateQueries({ queryKey: queryKeys.alertsMe });
@@ -396,7 +474,7 @@ export default function RecordScreen() {
     } catch (e) {
       Toast.show({ type: "error", text1: t("error"), text2: String(e) });
     }
-  }, [review, form, queryClient, router, t]);
+  }, [review, form, queryClient, router, t, selectedFarmId, txType]);
 
   const resetFlow = useCallback(() => {
     void confirmAsync(
@@ -444,8 +522,23 @@ export default function RecordScreen() {
           </TouchableOpacity>
         ))}
       </View>
+      <View style={styles.segWrap}>
+        {(["voice", "manual"] as const).map((val) => (
+          <TouchableOpacity
+            key={val}
+            style={[styles.segSide, entryMode === val && styles.segSideOn]}
+            onPress={() => setEntryMode(val)}
+            accessibilityRole="button"
+            accessibilityState={{ selected: entryMode === val }}
+          >
+            <Text style={[styles.segTxt, entryMode === val && styles.segTxtOn]}>
+              {val === "voice" ? "Voix" : "Manuel"}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
 
-      {!review ? (
+      {entryMode === "voice" && !review ? (
         <>
           {!isRecording && !isBusy && (
             <TouchableOpacity
@@ -496,14 +589,23 @@ export default function RecordScreen() {
             </View>
           )}
         </>
-      ) : (
-        <Card style={styles.reviewCard}>
-          <View style={styles.reviewHeader}>
-            <Ionicons name="checkmark-circle" size={24} color={colors.success} />
-            <Text style={styles.cardTitle}>{t("readyForReview")}</Text>
-          </View>
+      ) : null}
 
-          {!!review.transcription?.trim() && (
+      {((entryMode === "manual" && !review) || review) ? (
+        <Card style={styles.reviewCard}>
+          {review ? (
+            <View style={styles.reviewHeader}>
+              <Ionicons name="checkmark-circle" size={24} color={colors.success} />
+              <Text style={styles.cardTitle}>{t("readyForReview")}</Text>
+            </View>
+          ) : (
+            <View style={styles.reviewHeader}>
+              <Ionicons name="create-outline" size={22} color={colors.primary} />
+              <Text style={styles.cardTitle}>Saisie manuelle</Text>
+            </View>
+          )}
+
+          {!!review?.transcription?.trim() && (
             <View style={styles.transcriptionBox}>
               <Text style={styles.transcriptionLabel}>{t("transcriptionLabel")}</Text>
               <Text style={styles.transcriptionText}>{review.transcription}</Text>
@@ -513,19 +615,21 @@ export default function RecordScreen() {
           <FormField label={t("productName")}>
             <TouchableOpacity style={styles.selectInput} onPress={() => openSelector("product_name")} activeOpacity={0.8}>
               <Text style={form.product_name ? styles.selectInputValue : styles.selectInputPlaceholder}>
-                {form.product_name || t("productName")}
+                {form.product_name ? optionLabel(form.product_name) : t("productName")}
               </Text>
               <Ionicons name="chevron-down" size={18} color={colors.textMuted} />
             </TouchableOpacity>
           </FormField>
-          <FormField label={t("category")}>
-            <TouchableOpacity style={styles.selectInput} onPress={() => openSelector("category")} activeOpacity={0.8}>
-              <Text style={form.category ? styles.selectInputValue : styles.selectInputPlaceholder}>
-                {form.category || t("category")}
-              </Text>
-              <Ionicons name="chevron-down" size={18} color={colors.textMuted} />
-            </TouchableOpacity>
-          </FormField>
+          {txType === "buy" ? (
+            <FormField label={t("category")}>
+              <TouchableOpacity style={styles.selectInput} onPress={() => openSelector("category")} activeOpacity={0.8}>
+                <Text style={form.category ? styles.selectInputValue : styles.selectInputPlaceholder}>
+                  {form.category ? optionLabel(form.category) : t("category")}
+                </Text>
+                <Ionicons name="chevron-down" size={18} color={colors.textMuted} />
+              </TouchableOpacity>
+            </FormField>
+          ) : null}
           <View style={styles.row}>
             <View style={styles.halfField}>
               <FormField label={t("quantity")}>
@@ -542,10 +646,10 @@ export default function RecordScreen() {
             <TextFieldInput value={form.total_amount} onChangeText={(v) => setForm((f) => ({ ...f, total_amount: v }))} keyboardType="decimal-pad" />
           </FormField>
 
-          <PrimaryButton title={t("confirm")} onPress={() => void handleConfirm()} icon="checkmark-circle-outline" />
-          <GhostButton title={t("retry")} onPress={resetFlow} />
+          <PrimaryButton title={t("confirm")} onPress={() => void handleSubmit()} icon="checkmark-circle-outline" />
+          {review ? <GhostButton title={t("retry")} onPress={resetFlow} /> : null}
         </Card>
-      )}
+      ) : null}
       <Modal visible={!!selectField} transparent animationType="slide" onRequestClose={closeSelector}>
         <View style={styles.modalBackdrop}>
           <View style={styles.modalSheet}>
@@ -565,21 +669,39 @@ export default function RecordScreen() {
             />
             <ScrollView style={styles.optionsList} contentContainerStyle={styles.optionsListContent}>
               {currentOptions.map((option) => (
-                <TouchableOpacity
-                  key={option}
-                  style={styles.optionItem}
-                  onPress={() => applySelection(option)}
-                >
-                  <Text style={styles.optionText}>{option}</Text>
-                </TouchableOpacity>
+                <View key={option} style={styles.optionItemRow}>
+                  <TouchableOpacity
+                    style={styles.optionItem}
+                    onPress={() => applySelection(option)}
+                  >
+                    <Text style={styles.optionText}>{optionLabel(option)}</Text>
+                  </TouchableOpacity>
+                  {isCustomOption(option) ? (
+                    <TouchableOpacity
+                      style={styles.optionDeleteBtn}
+                      onPress={() => removeCustomOption(option)}
+                    >
+                      <Ionicons name="trash-outline" size={16} color={colors.error} />
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
               ))}
-              {!!selectSearch.trim() && !currentOptions.includes(selectSearch.trim()) && (
+              {!!selectSearch.trim() && !currentOptions.includes(selectSearch.trim()) && selectField === "farm" && (
                 <TouchableOpacity
                   style={[styles.optionItem, styles.optionCustom]}
                   onPress={() => applySelection(selectSearch.trim())}
                 >
                   <Ionicons name="add-circle-outline" size={16} color={colors.primary} />
                   <Text style={styles.optionCustomText}>Utiliser "{selectSearch.trim()}"</Text>
+                </TouchableOpacity>
+              )}
+              {!!selectSearch.trim() && !currentOptions.includes(selectSearch.trim()) && selectField !== "farm" && (
+                <TouchableOpacity
+                  style={[styles.optionItem, styles.optionCustom]}
+                  onPress={addCustomOption}
+                >
+                  <Ionicons name="add-circle-outline" size={16} color={colors.primary} />
+                  <Text style={styles.optionCustomText}>Ajouter "{selectSearch.trim()}"</Text>
                 </TouchableOpacity>
               )}
               {!currentOptions.length && !selectSearch.trim() && (
@@ -738,7 +860,9 @@ const styles = StyleSheet.create({
   },
   optionsList: { maxHeight: 320 },
   optionsListContent: { gap: space.xs, paddingBottom: space.sm },
+  optionItemRow: { flexDirection: "row", alignItems: "center", gap: space.xs },
   optionItem: {
+    flex: 1,
     minHeight: 44,
     borderWidth: 1,
     borderColor: colors.border,
@@ -746,6 +870,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.md,
     justifyContent: "center",
     backgroundColor: colors.surfaceMuted,
+  },
+  optionDeleteBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.errorSoft,
   },
   optionText: { fontSize: font.sm, color: colors.text },
   optionCustom: {

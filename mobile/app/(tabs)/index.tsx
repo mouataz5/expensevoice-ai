@@ -41,7 +41,10 @@ export default function HomeScreen() {
 
   const today = todayISO();
   const todayPurchases = purchases?.filter((p) => p.created_at?.startsWith(today)) ?? [];
-  const todaySales = todayPurchases.reduce((s, p) => s + (p.total_amount ?? 0), 0);
+  const todayBuyOps = todayPurchases.filter((p) => p.transaction_type === "buy");
+  const todaySellOps = todayPurchases.filter((p) => p.transaction_type === "sell");
+  const todayBuyAmount = todayBuyOps.reduce((s, p) => s + (p.total_amount ?? 0), 0);
+  const todaySellAmount = todaySellOps.reduce((s, p) => s + (p.total_amount ?? 0), 0);
   const pendingCount = purchases?.filter((p) => p.status === "ready_for_review").length ?? 0;
   const alertsCount = alerts?.filter((a) => a.status !== "resolved").length ?? 0;
 
@@ -115,7 +118,18 @@ export default function HomeScreen() {
           )}
           <SectionTitle title={t("homeOverview")} />
           <View style={styles.kpiRow}>
-            <MetricCard label={t("todaySales")} value={todaySales.toFixed(0)} hint="TND" />
+            <MetricCard
+              label={t("todayBuy")}
+              value={todayBuyAmount.toFixed(0)}
+              hint={`${todayBuyOps.length} ${t("myPurchases")}`}
+            />
+            <MetricCard
+              label={t("todaySell")}
+              value={todaySellAmount.toFixed(0)}
+              hint={`${todaySellOps.length} ${t("myPurchases")}`}
+            />
+          </View>
+          <View style={styles.kpiRow}>
             <MetricCard label={t("pendingApprovals")} value={String(pendingCount)} hint={t("myPurchases")} />
             <MetricCard label={t("alerts")} value={String(alertsCount)} hint={t("unresolved")} />
           </View>

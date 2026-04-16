@@ -70,6 +70,18 @@ export type PurchaseFilterParams = {
   offset?: number;
 };
 
+export async function createPurchase(payload: {
+  farm_id: string;
+  transaction_type: "buy" | "sell";
+  product_name: string;
+  category?: string | null;
+  quantity: number;
+  unit_price: number;
+}): Promise<PurchaseOut> {
+  const { data } = await api.post<PurchaseOut>("/purchases", payload);
+  return data;
+}
+
 export async function listMyPurchases(params?: PurchaseFilterParams): Promise<PurchaseOut[]> {
   const { data } = await api.get<PurchaseOut[]>("/purchases/me", { params });
   return data;

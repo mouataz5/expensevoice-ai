@@ -38,6 +38,16 @@ type DashboardStats = {
   total_amount_month: number;
   purchases_today: number;
   purchases_month: number;
+  inflow_today: number;
+  outflow_today: number;
+  inflow_month: number;
+  outflow_month: number;
+  gross_margin_month: number;
+  net_profit_month: number;
+  fixed_expenses_month: number;
+  variable_expenses_month: number;
+  poussins_sales_month: number;
+  nourriture_sales_month: number;
 };
 
 function isPendingReview(status: string) {
@@ -232,26 +242,50 @@ export default function DirectorDashboardScreen() {
         <>
           <View style={styles.kpiRow}>
             <AdminKpiStatCard
-              label={t("directorKpiTodayOps")}
-              value={String(statsQ.data?.purchases_today ?? 0)}
+              label={t("directorKpiCashInToday")}
+              value={(statsQ.data?.inflow_today ?? 0).toFixed(0)}
               hint={t("myPurchases")}
             />
             <AdminKpiStatCard
-              label={t("directorKpiTodayAmount")}
-              value={(statsQ.data?.total_amount_today ?? 0).toFixed(0)}
+              label={t("directorKpiCashOutToday")}
+              value={(statsQ.data?.outflow_today ?? 0).toFixed(0)}
               hint="TND"
               variant="emphasis"
             />
           </View>
           <View style={styles.kpiRow}>
             <AdminKpiStatCard
-              label={t("directorKpiMonthOps")}
-              value={String(statsQ.data?.purchases_month ?? 0)}
-              hint={t("myPurchases")}
+              label={t("directorKpiGrossMargin")}
+              value={(statsQ.data?.gross_margin_month ?? 0).toFixed(0)}
+              hint="TND"
             />
             <AdminKpiStatCard
-              label={t("directorKpiMonthAmount")}
-              value={(statsQ.data?.total_amount_month ?? 0).toFixed(0)}
+              label={t("directorKpiNetProfit")}
+              value={(statsQ.data?.net_profit_month ?? 0).toFixed(0)}
+              hint="TND"
+            />
+          </View>
+          <View style={styles.kpiRow}>
+            <AdminKpiStatCard
+              label={t("directorKpiFixedExpenses")}
+              value={(statsQ.data?.fixed_expenses_month ?? 0).toFixed(0)}
+              hint="TND"
+            />
+            <AdminKpiStatCard
+              label={t("directorKpiVariableExpenses")}
+              value={(statsQ.data?.variable_expenses_month ?? 0).toFixed(0)}
+              hint="TND"
+            />
+          </View>
+          <View style={styles.kpiRow}>
+            <AdminKpiStatCard
+              label={t("directorKpiPoussinsSales")}
+              value={(statsQ.data?.poussins_sales_month ?? 0).toFixed(0)}
+              hint="TND"
+            />
+            <AdminKpiStatCard
+              label={t("directorKpiNourritureSales")}
+              value={(statsQ.data?.nourriture_sales_month ?? 0).toFixed(0)}
               hint="TND"
             />
           </View>

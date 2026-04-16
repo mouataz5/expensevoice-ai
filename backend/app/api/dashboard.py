@@ -1,12 +1,16 @@
+import csv
+import io
 from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import Response
 from sqlalchemy import Date, cast, func, select, true
 from sqlalchemy.orm import Session
 
 from app.core.permissions import STATS_READ, require_permission
 from app.db.deps import get_db
 from app.models.purchase import Purchase
+from app.models.policy import Policy
 from app.models.user import User
 from app.schemas.stats import (
     CategoryStat,
@@ -16,6 +20,13 @@ from app.schemas.stats import (
 )
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
+
+
+def _get_taxonomy(db: Session) -> dict:
+    p = db.execute(
+        select(Policy).where(Policy.policy_type == "finance_taxonomy", Policy.is_active == True)  # noqa: E712
+    ).scalar_one_or_none()
+    return p.rule if p and isinstance(p.rule, dict) else {}
 
 
 @router.get("/stats", response_model=DashboardStats)
@@ -187,12 +198,169 @@ def get_stats(
         for r in daily_rows
     ]
 
+    tx_filters = [
+        Purchase.created_at >= start_dt,
+        Purchase.created_at < end_dt,
+        Purchase.is_deleted == False,
+        Purchase.farm_id == farm_id if farm_id else true(),
+    ]
+    inflow_month = float(
+        db.execute(
+            select(func.coalesce(func.sum(Purchase.total_amount), 0)).where(
+                *tx_filters,
+                Purchase.transaction_type == "sell",
+                Purchase.status == "approved",
+            )
+        ).scalar_one()
+        or 0
+    )
+    outflow_month = float(
+        db.execute(
+            select(func.coalesce(func.sum(Purchase.total_amount), 0)).where(
+                *tx_filters,
+                Purchase.transaction_type == "buy",
+                Purchase.status == "approved",
+            )
+        ).scalar_one()
+        or 0
+    )
+    inflow_today = float(
+        db.execute(
+            select(func.coalesce(func.sum(Purchase.total_amount), 0)).where(
+                Purchase.created_at >= start_today,
+                Purchase.created_at < (start_today + timedelta(days=1)),
+                Purchase.transaction_type == "sell",
+                Purchase.status == "approved",
+                Purchase.is_deleted == False,
+                Purchase.farm_id == farm_id if farm_id else true(),
+            )
+        ).scalar_one()
+        or 0
+    )
+    outflow_today = float(
+        db.execute(
+            select(func.coalesce(func.sum(Purchase.total_amount), 0)).where(
+                Purchase.created_at >= start_today,
+                Purchase.created_at < (start_today + timedelta(days=1)),
+                Purchase.transaction_type == "buy",
+                Purchase.status == "approved",
+                Purchase.is_deleted == False,
+                Purchase.farm_id == farm_id if farm_id else true(),
+            )
+        ).scalar_one()
+        or 0
+    )
+
+    taxonomy = _get_taxonomy(db)
+    fixed_cats = list(taxonomy.get("fixed_expense_categories", []) or [])
+    variable_cats = list(taxonomy.get("variable_expense_categories", []) or [])
+
+    fixed_expenses_month = 0.0
+    variable_expenses_month = 0.0
+    if fixed_cats:
+        fixed_expenses_month = float(
+            db.execute(
+                select(func.coalesce(func.sum(Purchase.total_amount), 0)).where(
+                    *tx_filters,
+                    Purchase.category.in_(fixed_cats),
+                    Purchase.status == "approved",
+                )
+            ).scalar_one()
+            or 0
+        )
+    if variable_cats:
+        variable_expenses_month = float(
+            db.execute(
+                select(func.coalesce(func.sum(Purchase.total_amount), 0)).where(
+                    *tx_filters,
+                    Purchase.category.in_(variable_cats),
+                    Purchase.status == "approved",
+                )
+            ).scalar_one()
+            or 0
+        )
+
+    poussins_sales_month = float(
+        db.execute(
+            select(func.coalesce(func.sum(Purchase.total_amount), 0)).where(
+                *tx_filters,
+                Purchase.transaction_type == "sell",
+                Purchase.status == "approved",
+                Purchase.product_name.ilike("%poussin%"),
+            )
+        ).scalar_one()
+        or 0
+    )
+    nourriture_sales_month = float(
+        db.execute(
+            select(func.coalesce(func.sum(Purchase.total_amount), 0)).where(
+                *tx_filters,
+                Purchase.transaction_type == "sell",
+                Purchase.status == "approved",
+                Purchase.product_name.ilike("%nourrit%"),
+            )
+        ).scalar_one()
+        or 0
+    )
+    gross_margin_month = inflow_month - outflow_month
+    net_profit_month = inflow_month - (fixed_expenses_month + variable_expenses_month)
+
     return DashboardStats(
         total_amount_today=total_today,
         total_amount_month=total_range,
         purchases_today=count_today,
         purchases_month=count_range,
+        inflow_today=inflow_today,
+        outflow_today=outflow_today,
+        inflow_month=inflow_month,
+        outflow_month=outflow_month,
+        gross_margin_month=gross_margin_month,
+        net_profit_month=net_profit_month,
+        fixed_expenses_month=fixed_expenses_month,
+        variable_expenses_month=variable_expenses_month,
+        poussins_sales_month=poussins_sales_month,
+        nourriture_sales_month=nourriture_sales_month,
         by_category=by_category,
         top_users=top_users,
         daily_trend_last_14_days=daily_trend,
+    )
+
+
+@router.get("/finance-report")
+def finance_report(
+    db: Session = Depends(get_db),
+    _user: User = require_permission(STATS_READ),
+    from_date: date | None = Query(default=None, alias="from"),
+    to_date: date | None = Query(default=None, alias="to"),
+    farm_id: str | None = Query(default=None),
+):
+    stats = get_stats(db=db, _user=_user, from_date=from_date, to_date=to_date, farm_id=farm_id)
+    return {
+        "period": {"from": str(from_date) if from_date else None, "to": str(to_date) if to_date else None},
+        "farm_id": farm_id,
+        "kpis": stats.model_dump(),
+    }
+
+
+@router.get("/finance-report.csv")
+def finance_report_csv(
+    db: Session = Depends(get_db),
+    _user: User = require_permission(STATS_READ),
+    from_date: date | None = Query(default=None, alias="from"),
+    to_date: date | None = Query(default=None, alias="to"),
+    farm_id: str | None = Query(default=None),
+):
+    stats = get_stats(db=db, _user=_user, from_date=from_date, to_date=to_date, farm_id=farm_id)
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["metric", "value"])
+    for key, value in stats.model_dump().items():
+        if isinstance(value, (list, dict)):
+            continue
+        writer.writerow([key, value])
+    csv_content = buf.getvalue()
+    return Response(
+        content=csv_content,
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="finance-report.csv"'},
     )

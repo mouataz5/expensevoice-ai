@@ -19,7 +19,7 @@ try:
     from app.core.rate_limit import limiter
 except ImportError:
     limiter = None  # type: ignore
-from app.core.seed import seed_admin, seed_director, seed_employee, seed_farms, seed_policies, seed_settings
+from app.core.seed import seed_accountant, seed_admin, seed_director, seed_employee, seed_farms, seed_policies, seed_settings
 from app.db.base import Base
 from app.db.session import SessionLocal, engine
 from app.middlewares.request_logging import RequestLoggingMiddleware
@@ -180,6 +180,7 @@ def startup():
         seed_admin(db)
         seed_director(db)
         seed_employee(db)
+        seed_accountant(db)
         seed_farms(db)
         seed_policies(db)
         seed_settings(db)

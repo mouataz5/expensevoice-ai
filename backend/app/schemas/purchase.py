@@ -1,12 +1,13 @@
 import uuid
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
 
 class PurchaseCreate(BaseModel):
     farm_id: uuid.UUID | None = None
+    transaction_type: Literal["buy", "sell"] = "buy"
     product_name: str
     category: Optional[str] = None
     quantity: int = Field(default=1, ge=1)

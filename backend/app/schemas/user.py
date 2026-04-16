@@ -21,7 +21,7 @@ class UserMapItem(BaseModel):
 class UserCreate(BaseModel):
     email: EmailStr
     password: str
-    role: str  # employee | director | admin
+    role: str  # employee | director | accountant | admin
 
 
 class UserUpdate(BaseModel):

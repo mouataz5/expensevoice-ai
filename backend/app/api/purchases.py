@@ -71,6 +71,7 @@ def create_purchase(
     item = Purchase(
         user_id=user.id,
         farm_id=farm.id,
+        transaction_type=payload.transaction_type,
         product_name=payload.product_name,
         category=payload.category,
         quantity=payload.quantity,
