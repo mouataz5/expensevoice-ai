@@ -4,7 +4,7 @@ export type FarmOut = {
   id: string;
   name: string;
   is_active: boolean;
-  created_at: string;
+  created_at?: string;
 };
 
 export async function listFarms(): Promise<FarmOut[]> {
@@ -12,7 +12,8 @@ export async function listFarms(): Promise<FarmOut[]> {
   return data;
 }
 
-export async function createFarm(payload: { name: string }): Promise<FarmOut> {
-  const { data } = await api.post<FarmOut>("/farms", payload);
+export async function createFarm(name: string): Promise<FarmOut> {
+  const { data } = await api.post<FarmOut>("/farms", { name });
   return data;
 }
+

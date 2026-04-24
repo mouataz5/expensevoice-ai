@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { View, Text, StyleSheet, ScrollView, RefreshControl, Pressable } from "react-native";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { View, Text, StyleSheet, ScrollView, RefreshControl, Pressable, Modal, TextInput } from "react-native";
 import { useRouter } from "expo-router";
 import { useAuth } from "../../src/context/AuthContext";
 import { useLocale } from "../../src/context/LocaleContext";
@@ -8,8 +8,9 @@ import { colors } from "../../src/theme/colors";
 import { font, space } from "../../src/theme/tokens";
 import { api } from "../../src/api/client";
 import { listInvoices, type InvoiceListItem } from "../../src/api/invoices";
-import { listFarms } from "../../src/api/farms";
+import { createFarm, listFarms } from "../../src/api/farms";
 import { listAllAlerts } from "../../src/api/alerts";
+import Toast from "react-native-toast-message";
 import {
   Card,
   DirectorKpiSkeleton,
@@ -56,9 +57,12 @@ function isPendingReview(status: string) {
 
 export default function DirectorDashboardScreen() {
   const [selectedFarmId, setSelectedFarmId] = useState<string>("");
+  const [farmModalOpen, setFarmModalOpen] = useState(false);
+  const [newFarmName, setNewFarmName] = useState("");
   const { user } = useAuth();
   const { t } = useLocale();
   const router = useRouter();
+  const queryClient = useQueryClient();
 
   const statsQ = useQuery({
     queryKey: ["dashboard-stats", selectedFarmId || "all"],
@@ -82,6 +86,21 @@ export default function DirectorDashboardScreen() {
   const alertsQ = useQuery({
     queryKey: ["alerts-director"],
     queryFn: listAllAlerts,
+  });
+
+  const createFarmM = useMutation({
+    mutationFn: (name: string) => createFarm({ name }),
+    onSuccess: async (farm) => {
+      setFarmModalOpen(false);
+      setNewFarmName("");
+      setSelectedFarmId(farm.id);
+      await queryClient.invalidateQueries({ queryKey: ["farms"] });
+      Toast.show({ type: "success", text1: t("successGenericTitle"), text2: t("farmCreateSuccess") });
+    },
+    onError: (e) => {
+      const formatted = formatApiError(e, t);
+      Toast.show({ type: "error", text1: t("error"), text2: formatted.message || t("farmCreateError") });
+    },
   });
 
   const errFmt = statsQ.error ? formatApiError(statsQ.error, t) : null;
@@ -128,6 +147,15 @@ export default function DirectorDashboardScreen() {
     void statsQ.refetch();
     void invoicesQ.refetch();
     void alertsQ.refetch();
+  };
+
+  const onCreateFarm = () => {
+    const name = newFarmName.trim();
+    if (name.length < 2) {
+      Toast.show({ type: "error", text1: t("error"), text2: t("farmNameMinChars") });
+      return;
+    }
+    createFarmM.mutate(name);
   };
 
   if (statsQ.error && errFmt && !statsQ.isLoading) {
@@ -195,6 +223,9 @@ export default function DirectorDashboardScreen() {
             </Text>
           </Pressable>
         ))}
+        <Pressable onPress={() => setFarmModalOpen(true)} style={[styles.farmChip, styles.addFarmChip]}>
+          <Text style={[styles.farmChipText, styles.addFarmChipText]}>+ {t("farmAddAction")}</Text>
+        </Pressable>
       </View>
 
       <AdminSectionLabel>{t("directorSectionAction")}</AdminSectionLabel>
@@ -345,6 +376,41 @@ export default function DirectorDashboardScreen() {
       <Card style={styles.hintCard}>
         <Text style={styles.hintText}>{t("directorDashboardFooterHint")}</Text>
       </Card>
+
+      <Modal
+        visible={farmModalOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setFarmModalOpen(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>{t("farmAddTitle")}</Text>
+            <Text style={styles.modalSubtitle}>{t("farmAddSubtitle")}</Text>
+            <TextInput
+              value={newFarmName}
+              onChangeText={setNewFarmName}
+              placeholder={t("farmNamePlaceholder")}
+              style={styles.modalInput}
+              autoCapitalize="words"
+            />
+            <View style={styles.modalButtons}>
+              <Pressable style={styles.modalBtnGhost} onPress={() => setFarmModalOpen(false)}>
+                <Text style={styles.modalBtnGhostText}>{t("cancel")}</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.modalBtnPrimary, createFarmM.isPending && styles.modalBtnDisabled]}
+                onPress={onCreateFarm}
+                disabled={createFarmM.isPending}
+              >
+                <Text style={styles.modalBtnPrimaryText}>
+                  {createFarmM.isPending ? t("processing") : t("farmCreateCta")}
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   );
 }
@@ -375,6 +441,8 @@ const styles = StyleSheet.create({
   farmChipOn: { backgroundColor: colors.primary, borderColor: colors.primary },
   farmChipText: { fontSize: font.xs, fontWeight: font.semibold, color: colors.textSecondary },
   farmChipTextOn: { color: "#fff" },
+  addFarmChip: { borderStyle: "dashed", borderColor: colors.primary },
+  addFarmChipText: { color: colors.primary },
   kpiRow: { flexDirection: "row", gap: space.sm, marginBottom: space.sm },
   toolsBlock: { marginBottom: space.md },
   recentBlock: { marginBottom: space.md },
@@ -386,4 +454,43 @@ const styles = StyleSheet.create({
   },
   hintCard: { marginTop: space.lg, backgroundColor: colors.surfaceMuted, borderStyle: "dashed" },
   hintText: { fontSize: font.sm, color: colors.textSecondary, lineHeight: 20 },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(15,23,42,0.45)",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: space.lg,
+  },
+  modalCard: {
+    width: "100%",
+    maxWidth: 420,
+    backgroundColor: colors.surface,
+    borderRadius: 16,
+    padding: space.lg,
+    gap: space.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  modalTitle: { fontSize: font.lg, fontWeight: font.bold, color: colors.primaryDark },
+  modalSubtitle: { fontSize: font.sm, color: colors.textSecondary },
+  modalInput: {
+    minHeight: 46,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 10,
+    paddingHorizontal: space.md,
+    backgroundColor: colors.backgroundElevated,
+    color: colors.text,
+  },
+  modalButtons: { flexDirection: "row", justifyContent: "flex-end", gap: space.sm, marginTop: space.xs },
+  modalBtnGhost: { paddingHorizontal: space.md, paddingVertical: space.sm },
+  modalBtnGhostText: { color: colors.textSecondary, fontSize: font.sm, fontWeight: font.semibold },
+  modalBtnPrimary: {
+    paddingHorizontal: space.md,
+    paddingVertical: space.sm,
+    borderRadius: 10,
+    backgroundColor: colors.primary,
+  },
+  modalBtnPrimaryText: { color: "#fff", fontSize: font.sm, fontWeight: font.semibold },
+  modalBtnDisabled: { opacity: 0.6 },
 });

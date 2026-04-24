@@ -1,9 +1,11 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchStats } from "../api/dashboard";
+import { createFarm, listFarms } from "../api/farms";
 import { downloadFile } from "../api/download";
 import { fetchUsersMap } from "../api/users";
+import { fetchMe } from "../api/me";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -55,13 +57,33 @@ export default function Stats() {
 
   const [from, setFrom] = useState(startOfMonthISO());
   const [to, setTo] = useState(todayISO());
+  const [selectedFarmId, setSelectedFarmId] = useState("");
+  const [farmName, setFarmName] = useState("");
+  const [farmFormError, setFarmFormError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
 
   const statsQ = useQuery({
-    queryKey: ["stats", from, to],
-    queryFn: () => fetchStats(from, to),
+    queryKey: ["stats", from, to, selectedFarmId || "all"],
+    queryFn: () => fetchStats(from, to, selectedFarmId || undefined),
     retry: 2,
   });
+  const farmsQ = useQuery({ queryKey: ["farms"], queryFn: listFarms, retry: 1 });
   const mapQ = useQuery({ queryKey: ["users-map"], queryFn: fetchUsersMap });
+  const meQ = useQuery({ queryKey: ["me"], queryFn: fetchMe, retry: 1 });
+
+  const createFarmM = useMutation({
+    mutationFn: (name: string) => createFarm(name),
+    onSuccess: async (farm) => {
+      setFarmName("");
+      setFarmFormError(null);
+      await queryClient.invalidateQueries({ queryKey: ["farms"] });
+      setSelectedFarmId(farm.id);
+    },
+    onError: (error: unknown) => {
+      const statusCode = (error as { response?: { status?: number } })?.response?.status;
+      setFarmFormError(statusCode === 409 ? t("stats.farmDuplicate") : t("stats.farmCreateError"));
+    },
+  });
 
   const trend = useMemo(() => {
     const s = statsQ.data?.daily_trend_last_14_days ?? [];
@@ -129,6 +151,17 @@ export default function Stats() {
     name: c?.category ?? "—",
     total: Number(c?.total_amount) ?? 0,
   }));
+  const canManageFarms = meQ.data?.role === "admin";
+
+  const onCreateFarm = () => {
+    const normalized = farmName.trim();
+    if (normalized.length < 2) {
+      setFarmFormError(t("stats.farmMinChars"));
+      return;
+    }
+    setFarmFormError(null);
+    createFarmM.mutate(normalized);
+  };
 
   return (
     <div className="space-y-6">
@@ -149,6 +182,30 @@ export default function Stats() {
       />
 
       <Toolbar className="flex-wrap gap-3 items-end">
+        <div className="space-y-1">
+          <div className="text-xs text-muted-foreground">{t("stats.farm")}</div>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant={!selectedFarmId ? "default" : "outline"}
+              size="sm"
+              className="rounded-xl"
+              onClick={() => setSelectedFarmId("")}
+            >
+              {t("stats.global")}
+            </Button>
+            {(farmsQ.data ?? []).map((farm) => (
+              <Button
+                key={farm.id}
+                variant={selectedFarmId === farm.id ? "default" : "outline"}
+                size="sm"
+                className="rounded-xl"
+                onClick={() => setSelectedFarmId(farm.id)}
+              >
+                {farm.name}
+              </Button>
+            ))}
+          </div>
+        </div>
         <div className="space-y-1">
           <div className="text-xs text-muted-foreground">{t("stats.from")}</div>
           <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
@@ -181,6 +238,26 @@ export default function Stats() {
         >
           {t("stats.thisMonth")}
         </Button>
+        {canManageFarms ? (
+          <div className="space-y-1 min-w-[240px]">
+            <div className="text-xs text-muted-foreground">{t("stats.addFarm")}</div>
+            <div className="flex gap-2">
+              <Input
+                value={farmName}
+                onChange={(e) => setFarmName(e.target.value)}
+                placeholder={t("stats.farmNamePlaceholder")}
+              />
+              <Button
+                onClick={onCreateFarm}
+                disabled={createFarmM.isPending}
+                className="rounded-xl"
+              >
+                {createFarmM.isPending ? t("stats.creatingFarm") : t("stats.createFarm")}
+              </Button>
+            </div>
+            {farmFormError ? <div className="text-xs text-destructive">{farmFormError}</div> : null}
+          </div>
+        ) : null}
       </Toolbar>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -188,6 +265,18 @@ export default function Stats() {
         <Kpi title={t("stats.rangeAmount")} value={Number(stats.total_amount_month) ?? 0} format="currency" fmtTND={fmtTND} fmtNum={fmtNum} />
         <Kpi title={t("stats.todayCount")} value={Number(stats.purchases_today) ?? 0} format="number" fmtTND={fmtTND} fmtNum={fmtNum} />
         <Kpi title={t("stats.rangeCount")} value={Number(stats.purchases_month) ?? 0} format="number" fmtTND={fmtTND} fmtNum={fmtNum} />
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <Kpi title={t("stats.cashInToday")} value={Number(stats.inflow_today) ?? 0} format="currency" fmtTND={fmtTND} fmtNum={fmtNum} />
+        <Kpi title={t("stats.cashOutToday")} value={Number(stats.outflow_today) ?? 0} format="currency" fmtTND={fmtTND} fmtNum={fmtNum} />
+        <Kpi title={t("stats.grossMargin")} value={Number(stats.gross_margin_month) ?? 0} format="currency" fmtTND={fmtTND} fmtNum={fmtNum} />
+        <Kpi title={t("stats.netProfit")} value={Number(stats.net_profit_month) ?? 0} format="currency" fmtTND={fmtTND} fmtNum={fmtNum} />
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <Kpi title={t("stats.fixedExpenses")} value={Number(stats.fixed_expenses_month) ?? 0} format="currency" fmtTND={fmtTND} fmtNum={fmtNum} />
+        <Kpi title={t("stats.variableExpenses")} value={Number(stats.variable_expenses_month) ?? 0} format="currency" fmtTND={fmtTND} fmtNum={fmtNum} />
+        <Kpi title={t("stats.poussinsSales")} value={Number(stats.poussins_sales_month) ?? 0} format="currency" fmtTND={fmtTND} fmtNum={fmtNum} />
+        <Kpi title={t("stats.feedSales")} value={Number(stats.nourriture_sales_month) ?? 0} format="currency" fmtTND={fmtTND} fmtNum={fmtNum} />
       </div>
 
       {(Number(stats.purchases_month) ?? 0) === 0 && (Number(stats.total_amount_month) ?? 0) === 0 && (

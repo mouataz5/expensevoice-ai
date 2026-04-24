@@ -56,7 +56,8 @@
         {
           "microphonePermission": "Allow Abes AgroTech to record voice for purchases."
         }
-      ]
+      ],
+      "expo-sharing"
     ],
     "extra": {
       "router": {},

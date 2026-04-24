@@ -46,7 +46,7 @@ import {
 import { confirmAsync } from "../../src/lib/confirm";
 
 type TxType = "buy" | "sell";
-type SelectField = "product_name" | "category" | "farm";
+type SelectField = "supplier_name" | "product_name" | "category" | "farm";
 
 const SILENCE_THRESHOLD_DB = -38;
 const SILENCE_AUTO_STOP_MS = 3000;
@@ -183,6 +183,7 @@ export default function RecordScreen() {
   const [polling, setPolling] = useState(false);
   const [review, setReview] = useState<PurchaseOut | null>(null);
   const [form, setForm] = useState({
+    supplier_name: "",
     product_name: "",
     category: "",
     quantity: "1",
@@ -192,6 +193,7 @@ export default function RecordScreen() {
   const [selectField, setSelectField] = useState<SelectField | null>(null);
   const [selectSearch, setSelectSearch] = useState("");
   const [selectedFarmId, setSelectedFarmId] = useState("");
+  const [customSupplierOptions, setCustomSupplierOptions] = useState<string[]>([]);
   const [customProductOptions, setCustomProductOptions] = useState<string[]>([]);
   const [customCategoryOptions, setCustomCategoryOptions] = useState<string[]>([]);
 
@@ -243,9 +245,22 @@ export default function RecordScreen() {
     return [];
   }, [txType, customCategoryOptions]);
 
+  const supplierOptions = useMemo(() => {
+    const set = new Set<string>();
+    const reviewSupplier = (form.supplier_name || "").trim();
+    if (reviewSupplier) set.add(reviewSupplier);
+    for (const v of customSupplierOptions) {
+      const s = (v || "").trim();
+      if (s) set.add(s);
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [customSupplierOptions, form.supplier_name]);
+
   const currentOptions = useMemo(() => {
     const base =
-      selectField === "category"
+      selectField === "supplier_name"
+        ? supplierOptions
+        : selectField === "category"
         ? categoryOptions
         : selectField === "farm"
           ? farms.map((f) => f.name)
@@ -253,7 +268,7 @@ export default function RecordScreen() {
     const q = selectSearch.trim().toLowerCase();
     if (!q) return base;
     return base.filter((v) => optionLabel(v).toLowerCase().includes(q) || v.toLowerCase().includes(q));
-  }, [selectField, categoryOptions, productOptions, farms, selectSearch, optionLabel]);
+  }, [selectField, supplierOptions, categoryOptions, productOptions, farms, selectSearch, optionLabel]);
 
   useEffect(() => {
     if (txType === "sell") {
@@ -265,6 +280,15 @@ export default function RecordScreen() {
     }
     setForm((f) => ({ ...f }));
   }, [txType]);
+
+  useEffect(() => {
+    const qty = parseInt(form.quantity, 10) || 0;
+    const unit = parseFloat(String(form.unit_price).replace(",", ".")) || 0;
+    const computed = (qty * unit).toString();
+    if (form.total_amount !== computed) {
+      setForm((f) => ({ ...f, total_amount: computed }));
+    }
+  }, [form.quantity, form.unit_price, form.total_amount]);
 
   const openSelector = useCallback((field: SelectField) => {
     setSelectField(field);
@@ -293,7 +317,9 @@ export default function RecordScreen() {
   const addCustomOption = useCallback(() => {
     const value = selectSearch.trim();
     if (!value || !selectField || selectField === "farm") return;
-    if (selectField === "category") {
+    if (selectField === "supplier_name") {
+      setCustomSupplierOptions((prev) => (prev.includes(value) ? prev : [...prev, value]));
+    } else if (selectField === "category") {
       setCustomCategoryOptions((prev) => (prev.includes(value) ? prev : [...prev, value]));
     } else {
       setCustomProductOptions((prev) => (prev.includes(value) ? prev : [...prev, value]));
@@ -302,6 +328,11 @@ export default function RecordScreen() {
   }, [selectField, selectSearch, applySelection]);
 
   const removeCustomOption = useCallback((value: string) => {
+    if (selectField === "supplier_name") {
+      setCustomSupplierOptions((prev) => prev.filter((v) => v !== value));
+      setForm((f) => (f.supplier_name === value ? { ...f, supplier_name: "" } : f));
+      return;
+    }
     if (selectField === "category") {
       setCustomCategoryOptions((prev) => prev.filter((v) => v !== value));
       setForm((f) => (f.category === value ? { ...f, category: "" } : f));
@@ -314,10 +345,11 @@ export default function RecordScreen() {
   }, [selectField]);
 
   const isCustomOption = useCallback((value: string): boolean => {
+    if (selectField === "supplier_name") return customSupplierOptions.includes(value);
     if (selectField === "category") return customCategoryOptions.includes(value);
     if (selectField === "product_name") return customProductOptions.includes(value);
     return false;
-  }, [selectField, customCategoryOptions, customProductOptions]);
+  }, [selectField, customSupplierOptions, customCategoryOptions, customProductOptions]);
 
   const silenceStartRef = useRef<number | null>(null);
   const [silenceCountdown, setSilenceCountdown] = useState(SILENCE_AUTO_STOP_MS);
@@ -412,6 +444,7 @@ export default function RecordScreen() {
         } else {
           setReview(lastPurchase);
           setForm({
+            supplier_name: "",
             product_name: lastPurchase.product_name || "",
             category: lastPurchase.category || "",
             quantity: String(lastPurchase.quantity || 1),
@@ -612,6 +645,14 @@ export default function RecordScreen() {
             </View>
           )}
 
+          <FormField label={t("supplier")}>
+            <TouchableOpacity style={styles.selectInput} onPress={() => openSelector("supplier_name")} activeOpacity={0.8}>
+              <Text style={form.supplier_name ? styles.selectInputValue : styles.selectInputPlaceholder}>
+                {form.supplier_name || t("supplier")}
+              </Text>
+              <Ionicons name="chevron-down" size={18} color={colors.textMuted} />
+            </TouchableOpacity>
+          </FormField>
           <FormField label={t("productName")}>
             <TouchableOpacity style={styles.selectInput} onPress={() => openSelector("product_name")} activeOpacity={0.8}>
               <Text style={form.product_name ? styles.selectInputValue : styles.selectInputPlaceholder}>
@@ -643,7 +684,12 @@ export default function RecordScreen() {
             </View>
           </View>
           <FormField label={t("totalAmount")}>
-            <TextFieldInput value={form.total_amount} onChangeText={(v) => setForm((f) => ({ ...f, total_amount: v }))} keyboardType="decimal-pad" />
+            <TextFieldInput
+              value={form.total_amount}
+              editable={false}
+              keyboardType="decimal-pad"
+              style={styles.readonlyInput}
+            />
           </FormField>
 
           <PrimaryButton title={t("confirm")} onPress={() => void handleSubmit()} icon="checkmark-circle-outline" />
@@ -654,7 +700,13 @@ export default function RecordScreen() {
         <View style={styles.modalBackdrop}>
           <View style={styles.modalSheet}>
             <Text style={styles.modalTitle}>
-              {selectField === "category" ? t("category") : selectField === "farm" ? "Ferme" : t("productName")}
+              {selectField === "supplier_name"
+                ? t("supplier")
+                : selectField === "category"
+                  ? t("category")
+                  : selectField === "farm"
+                    ? "Ferme"
+                    : t("productName")}
             </Text>
             <TextFieldInput
               value={selectSearch}
@@ -662,6 +714,8 @@ export default function RecordScreen() {
               placeholder={
                 selectField === "category"
                   ? "Rechercher catégorie..."
+                  : selectField === "supplier_name"
+                    ? "Rechercher fournisseur..."
                   : selectField === "farm"
                     ? "Rechercher ferme..."
                     : "Rechercher produit..."
@@ -826,6 +880,7 @@ const styles = StyleSheet.create({
 
   row: { flexDirection: "row", gap: space.md },
   halfField: { flex: 1 },
+  readonlyInput: { backgroundColor: colors.surfaceMuted, color: colors.textSecondary },
   selectInput: {
     minHeight: 48,
     borderWidth: 1,
