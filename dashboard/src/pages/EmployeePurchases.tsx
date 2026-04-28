@@ -3,13 +3,13 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { listMyPurchases } from "../api/purchases";
-import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/PageHeader";
 import { FilterToolbar } from "@/components/FilterToolbar";
 import { EmptyState } from "@/components/EmptyState";
 import { SkeletonCard } from "@/components/SkeletonCard";
+import { EmployeeHero, EmployeePage, EmployeeSectionCard } from "@/components/employee/EmployeeShell";
 import {
   Table,
   TableBody,
@@ -38,12 +38,25 @@ export default function EmployeePurchases() {
     );
   }, [q.data, statusFilter, search]);
 
+  const statusTone = (status: string) => {
+    const s = (status ?? "").toLowerCase();
+    if (s.includes("approved")) return "info";
+    if (s.includes("pending")) return "warning";
+    if (s.includes("rejected")) return "destructive";
+    return "secondary";
+  };
+
   return (
-    <div className="space-y-6">
+    <EmployeePage>
+      <EmployeeHero
+        eyebrow="Employee Dashboard"
+        title={t("employee.myPurchasesTitle")}
+        subtitle={t("employee.myPurchasesSubtitle")}
+        meta={[{ label: t("employee.results"), value: filtered.length }]}
+      />
       <PageHeader title={t("employee.myPurchasesTitle")} subtitle={t("employee.myPurchasesSubtitle")} />
 
-      <Card>
-        <CardContent className="p-5">
+      <EmployeeSectionCard>
           {q.isLoading && <SkeletonCard lines={6} />}
           {q.isError && (
             <EmptyState
@@ -77,6 +90,7 @@ export default function EmployeePurchases() {
                 <span className="text-sm text-muted-foreground ms-auto">{filtered.length} {t("employee.results")}</span>
               </FilterToolbar>
           {filtered.length > 0 && (
+            <div className="rounded-xl border border-border overflow-hidden bg-card">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -89,11 +103,11 @@ export default function EmployeePurchases() {
                   <TableHead>{t("employee.details")}</TableHead>
                 </TableRow>
               </TableHeader>
-              <TableBody>
+                  <TableBody>
                 {filtered.map((p) => (
-                  <TableRow key={p.id}>
+                  <TableRow key={p.id} className="hover:bg-muted/30">
                     <TableCell>
-                      <Badge variant="secondary">{p.status}</Badge>
+                      <Badge variant={statusTone(p.status)}>{p.status}</Badge>
                     </TableCell>
                     <TableCell className="font-medium">
                       {p.product_name}
@@ -111,14 +125,14 @@ export default function EmployeePurchases() {
                 ))}
               </TableBody>
             </Table>
+            </div>
           )}
           {filtered.length === 0 && q.data && q.data.length > 0 && (
             <EmptyState title={t("employee.noPurchasesFilter")} description={t("employee.myPurchasesSubtitle")} />
           )}
             </>
           )}
-        </CardContent>
-      </Card>
-    </div>
+      </EmployeeSectionCard>
+    </EmployeePage>
   );
 }

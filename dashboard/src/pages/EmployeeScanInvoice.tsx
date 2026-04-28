@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 import {
@@ -16,6 +16,8 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/PageHeader";
 import { EmptyState } from "@/components/EmptyState";
+import { EmployeePage, EmployeeSectionCard } from "@/components/employee/EmployeeShell";
+import { listFarms } from "../api/farms";
 
 const POLL_INTERVAL = 3000;      // 3s between polls (OCR on CPU is slow)
 const MAX_POLL_ATTEMPTS = 400;   // up to 20 minutes total
@@ -30,6 +32,7 @@ function fmtTND(val: number | null | undefined): string {
 
 export default function EmployeeScanInvoice() {
   const [transactionType, setTransactionType] = useState<"sell" | "buy" | null>(null);
+  const [farmId, setFarmId] = useState("");
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [invoiceId, setInvoiceId] = useState<string | null>(null);
@@ -39,6 +42,7 @@ export default function EmployeeScanInvoice() {
   const [loadingPreview, setLoadingPreview] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
+  const farmsQ = useQuery({ queryKey: ["farms"], queryFn: listFarms });
 
   const reset = useCallback(() => {
     setImageFile(null);
@@ -65,7 +69,8 @@ export default function EmployeeScanInvoice() {
   const scanM = useMutation({
     mutationFn: async () => {
       if (!imageFile || !transactionType) throw new Error("اختر نوع العملية وارفع صورة الفاتورة");
-      return scanInvoice(imageFile, transactionType);
+      if (!farmId) throw new Error("اختر المزرعة قبل رفع الفاتورة");
+      return scanInvoice(imageFile, transactionType, farmId);
     },
     onSuccess: (data) => {
       setInvoiceId(data.invoice_id);
@@ -148,7 +153,25 @@ export default function EmployeeScanInvoice() {
     confLevel >= 0.7 ? "bg-emerald-500" : confLevel >= 0.3 ? "bg-amber-500" : "bg-red-500";
 
   return (
-    <div className="space-y-6">
+    <EmployeePage className="space-y-8">
+      <div className="rounded-2xl border border-emerald-100/70 bg-gradient-to-l from-emerald-100/70 via-emerald-50/60 to-white p-6 text-right shadow-sm">
+        <div className="inline-flex items-center rounded-full bg-emerald-200/80 px-3 py-1 text-xs font-semibold text-emerald-900 mb-3">
+          Scan Workspace • Modern UX
+        </div>
+        <h2 className="text-2xl font-bold text-emerald-900">مسح فاتورة</h2>
+        <p className="mt-1 text-sm text-muted-foreground">اختر النوع → ارفع الصورة → راجع البيانات → حمّل PDF</p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <span className="rounded-full border border-emerald-200 bg-white px-3 py-1 text-xs text-emerald-900">
+            {(farmsQ.data ?? []).find((f) => f.id === farmId)?.name ?? "غير محددة"}
+          </span>
+          <span className="rounded-full border border-emerald-200 bg-white px-3 py-1 text-xs text-emerald-900">
+            {transactionType === "sell" ? "بيع" : transactionType === "buy" ? "شراء" : "غير محدد"}
+          </span>
+          <span className="rounded-full border border-emerald-200 bg-white px-3 py-1 text-xs text-emerald-900">
+            {ready ? "جاهز" : processing ? "قيد المعالجة" : "بانتظار الرفع"}
+          </span>
+        </div>
+      </div>
       <PageHeader
         title="مسح فاتورة"
         subtitle="اختر النوع → ارفع الصورة → راجع البيانات → حمّل PDF"
@@ -160,8 +183,20 @@ export default function EmployeeScanInvoice() {
       />
 
       {/* Step 1: Transaction type */}
-      <Card>
-        <CardContent className="p-5 space-y-4">
+      <EmployeeSectionCard title="نوع العملية" subtitle="حدد نوع الفاتورة قبل الرفع" className="transition-shadow hover:shadow-md">
+          <Label className="text-base">المزرعة</Label>
+          <select
+            className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm mb-3"
+            value={farmId}
+            onChange={(e) => setFarmId(e.target.value)}
+          >
+            <option value="">اختر المزرعة</option>
+            {(farmsQ.data ?? []).map((f) => (
+              <option key={f.id} value={f.id}>
+                {f.name}
+              </option>
+            ))}
+          </select>
           <Label className="text-base">نوع العملية</Label>
           <div className="flex gap-3 flex-wrap">
             <Button
@@ -181,12 +216,10 @@ export default function EmployeeScanInvoice() {
               بيع
             </Button>
           </div>
-        </CardContent>
-      </Card>
+      </EmployeeSectionCard>
 
       {/* Step 2: Upload */}
-      <Card>
-        <CardContent className="p-5 space-y-4">
+      <EmployeeSectionCard title="رفع الفاتورة" subtitle="اختر من الملفات أو التقط صورة بالكاميرا" className="transition-shadow hover:shadow-md">
           <Label className="text-base">صورة الفاتورة (jpg, png, heic — حتى 8 ميجا)</Label>
           <input
             ref={fileInputRef}
@@ -203,13 +236,13 @@ export default function EmployeeScanInvoice() {
             className="hidden"
             onChange={handleFileChange}
           />
-          <div className="flex gap-3 flex-wrap">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <Button
               type="button"
               variant="outline"
               className="rounded-xl"
               onClick={() => fileInputRef.current?.click()}
-              disabled={!transactionType}
+              disabled={!transactionType || !farmId}
             >
               اختيار ملف
             </Button>
@@ -218,14 +251,14 @@ export default function EmployeeScanInvoice() {
               variant="outline"
               className="rounded-xl"
               onClick={() => cameraInputRef.current?.click()}
-              disabled={!transactionType}
+              disabled={!transactionType || !farmId}
             >
               فتح الكاميرا
             </Button>
             <Button
               className="rounded-xl"
               onClick={() => scanM.mutate()}
-              disabled={!imageFile || !transactionType || scanM.isPending || processing}
+              disabled={!imageFile || !transactionType || !farmId || scanM.isPending || processing}
             >
               {scanM.isPending ? "جاري الرفع..." : "إرسال للمعالجة"}
             </Button>
@@ -244,7 +277,7 @@ export default function EmployeeScanInvoice() {
               <img
                 src={imagePreview}
                 alt="فاتورة"
-                className="max-h-64 rounded-xl border border-border object-contain"
+                className="w-full max-h-72 rounded-xl border border-border object-contain bg-muted/20"
               />
             </div>
           )}
@@ -255,19 +288,16 @@ export default function EmployeeScanInvoice() {
               description="اختر نوع العملية ثم ارفع صورة الفاتورة (كاميرا أو ملف)."
             />
           )}
-        </CardContent>
-      </Card>
+      </EmployeeSectionCard>
 
       {/* Step 3: Extraction Review Dashboard */}
       {loadingPreview && (
-        <Card>
-          <CardContent className="p-5">
+        <EmployeeSectionCard>
             <div className="flex items-center gap-2 text-muted-foreground">
               <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
               <span>جاري تحميل البيانات المستخرجة...</span>
             </div>
-          </CardContent>
-        </Card>
+        </EmployeeSectionCard>
       )}
 
       {preview && (
@@ -295,8 +325,7 @@ export default function EmployeeScanInvoice() {
           )}
 
           {/* Confidence + Summary Header */}
-          <Card>
-            <CardContent className="p-5 space-y-4">
+          <EmployeeSectionCard title="ملخص الاستخراج">
               <div className="flex items-center justify-between">
                 <h2 className="text-lg font-bold">البيانات المستخرجة (Données extraites)</h2>
                 <div className="flex items-center gap-2">
@@ -332,13 +361,11 @@ export default function EmployeeScanInvoice() {
                   </Badge>
                 </div>
               </div>
-            </CardContent>
-          </Card>
+          </EmployeeSectionCard>
 
           {/* Items Table */}
           {preview.items.length > 0 && (
-            <Card>
-              <CardContent className="p-5 space-y-3">
+            <EmployeeSectionCard title="تفاصيل المواد">
                 <h3 className="font-semibold">تفاصيل المواد (Détails articles)</h3>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
@@ -362,25 +389,21 @@ export default function EmployeeScanInvoice() {
                     </tbody>
                   </table>
                 </div>
-              </CardContent>
-            </Card>
+            </EmployeeSectionCard>
           )}
 
           {preview.items.length === 0 && (
-            <Card>
-              <CardContent className="p-5">
+            <EmployeeSectionCard>
                 <p className="text-sm text-muted-foreground text-center">
                   {preview.extraction_error === "no_ocr_text"
                     ? "لم يتم العثور على نص في الصورة — تحقق من جودة الصورة أو إعدادات المسح (No text detected — check image quality or OCR)"
                     : "لم يتم استخراج مواد من الفاتورة (Aucun article extrait)"}
                 </p>
-              </CardContent>
-            </Card>
+            </EmployeeSectionCard>
           )}
 
           {/* Totals */}
-          <Card>
-            <CardContent className="p-5 space-y-3">
+          <EmployeeSectionCard title="الإجماليات">
               <h3 className="font-semibold">الإجماليات (Totaux)</h3>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                 <div className="rounded-xl bg-muted/30 border border-border p-3 text-center">
@@ -402,12 +425,10 @@ export default function EmployeeScanInvoice() {
                   <p className="text-lg font-bold">{preview.currency}</p>
                 </div>
               </div>
-            </CardContent>
-          </Card>
+          </EmployeeSectionCard>
 
           {/* PDF Download + Image */}
-          <Card>
-            <CardContent className="p-5 space-y-4">
+          <EmployeeSectionCard title="المخرجات" className="transition-shadow hover:shadow-md">
               <div className="flex items-center gap-3 flex-wrap">
                 <Button className="rounded-xl" onClick={handleDownloadPdf}>
                   تحميل PDF (Télécharger PDF)
@@ -426,10 +447,9 @@ export default function EmployeeScanInvoice() {
                   />
                 </div>
               )}
-            </CardContent>
-          </Card>
+          </EmployeeSectionCard>
         </>
       )}
-    </div>
+    </EmployeePage>
   );
 }

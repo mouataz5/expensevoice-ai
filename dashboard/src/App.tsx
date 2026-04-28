@@ -6,6 +6,10 @@ import EmployeeRecord from "./pages/EmployeeRecord";
 import EmployeeScanInvoice from "./pages/EmployeeScanInvoice";
 import EmployeePurchases from "./pages/EmployeePurchases";
 import EmployeeAlerts from "./pages/EmployeeAlerts";
+import EmployeeInvoices from "./pages/EmployeeInvoices";
+import EmployeeHome from "./pages/EmployeeHome";
+import EmployeeProfile from "./pages/EmployeeProfile";
+import EmployeeInvoiceDetail from "./pages/EmployeeInvoiceDetail";
 import InvoiceReview from "./pages/InvoiceReview";
 import PurchaseDetails from "./pages/PurchaseDetails";
 import Audit from "./pages/Audit";
@@ -44,9 +48,13 @@ export default function App() {
       <Route path="/invoices" element={<Protected><InvoiceReview /></Protected>} />
       <Route path="/policies" element={<Protected><Policies /></Protected>} />
       <Route path="/employee/record" element={<Protected><EmployeeRecord /></Protected>} />
+      <Route path="/employee/home" element={<Protected><EmployeeHome /></Protected>} />
       <Route path="/employee/scan-invoice" element={<Protected><EmployeeScanInvoice /></Protected>} />
       <Route path="/employee/purchases" element={<Protected><EmployeePurchases /></Protected>} />
+      <Route path="/employee/invoices" element={<Protected><EmployeeInvoices /></Protected>} />
+      <Route path="/employee/invoices/:id" element={<Protected><EmployeeInvoiceDetail /></Protected>} />
       <Route path="/employee/alerts" element={<Protected><EmployeeAlerts /></Protected>} />
+      <Route path="/employee/profile" element={<Protected><EmployeeProfile /></Protected>} />
       <Route path="/purchases/:id" element={<Protected><PurchaseDetails /></Protected>} />
       <Route path="/audit" element={<Protected><Audit /></Protected>} />
       <Route path="/users" element={<Protected><Users /></Protected>} />

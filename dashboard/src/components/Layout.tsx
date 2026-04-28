@@ -20,10 +20,13 @@ const navBase = [
 ];
 
 const navEmployee = [
+  { to: "/employee/home", labelKey: "nav.homeEmployee" as const },
   { to: "/employee/record", labelKey: "nav.record" as const },
   { to: "/employee/scan-invoice", labelKey: "nav.scanInvoice" as const },
   { to: "/employee/purchases", labelKey: "nav.myPurchases" as const },
+  { to: "/employee/invoices", labelKey: "nav.myInvoices" as const },
   { to: "/employee/alerts", labelKey: "nav.myAlerts" as const },
+  { to: "/employee/profile", labelKey: "nav.profileEmployee" as const },
 ];
 
 export default function Layout({ children }: { children: React.ReactNode }) {
@@ -45,7 +48,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (pathname === "/" && role === "employee") {
-      navigate("/employee/record", { replace: true });
+      navigate("/employee/home", { replace: true });
     }
   }, [pathname, role, navigate]);
 
@@ -74,7 +77,12 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         {/* Sidebar: distinct surface, dynamic link backgrounds */}
         <aside className="hidden md:flex md:w-64 md:flex-col border-r border-border bg-card min-h-screen p-4 shadow-sm">
           <div className="text-xl font-semibold text-primary">{BRAND_TITLE}</div>
-          <div className="text-sm text-muted-foreground mb-4">{t(BRAND_SUBTITLE_KEY)}</div>
+          <div className="text-sm text-muted-foreground mb-1">{t(BRAND_SUBTITLE_KEY)}</div>
+          {role === "employee" ? (
+            <div className="inline-flex w-fit rounded-full border border-primary/20 bg-primary/5 px-2.5 py-1 text-xs font-medium text-primary">
+              {t("common.view_subtitle_employee")}
+            </div>
+          ) : null}
           <Separator className="my-3" />
           <nav className="flex flex-col gap-1">
             {nav.map((n, index) => {
@@ -85,7 +93,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                   key={n.to}
                   to={n.to}
                   className={cn(
-                    "sidebar-nav-link",
+                    "sidebar-nav-link rounded-xl px-3 py-2 text-sm transition-colors",
                     active && "active",
                     active && `nav-accent-${accentIndex}`
                   )}
@@ -139,7 +147,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                     </Button>
                   </>
                 )}
-                <span className="text-sm text-muted-foreground">
+                <span className="hidden sm:inline text-sm text-muted-foreground">
                   {role === "employee"
                     ? t("common.view_subtitle_employee")
                     : t("common.view_subtitle")}

@@ -2,16 +2,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
-import { extractPurchase, confirmPurchase, uploadVoice, getPurchase } from "../api/purchases";
+import { extractPurchase, confirmPurchase, uploadVoice, getPurchase, createPurchase, listMyPurchasesFiltered } from "../api/purchases";
 import { fetchAllowedCategories } from "../api/policies_public";
+import { listFarms } from "../api/farms";
 
-import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/PageHeader";
 import { Stepper } from "@/components/Stepper";
+import { EmployeePage, EmployeeSectionCard } from "@/components/employee/EmployeeShell";
 
 function pickMimeType(): string {
   const preferred = [
@@ -43,6 +44,8 @@ function msToTime(ms: number) {
 export default function EmployeeRecord() {
   const qc = useQueryClient();
   const categoriesQ = useQuery({ queryKey: ["allowed-categories"], queryFn: fetchAllowedCategories });
+  const farmsQ = useQuery({ queryKey: ["farms"], queryFn: listFarms });
+  const recentPurchasesQ = useQuery({ queryKey: ["my-purchases", "record-options"], queryFn: () => listMyPurchasesFiltered({ limit: 100 }) });
 
   // Recorder state
   const [supported, setSupported] = useState(true);
@@ -58,8 +61,10 @@ export default function EmployeeRecord() {
   const timerRef = useRef<number | null>(null);
 
   // Part 3: Transaction type (بيع / شراء) — must choose before recording
-  const [transactionType, setTransactionType] = useState<"sell" | "buy" | null>(null);
+  const [transactionType, setTransactionType] = useState<"sell" | "buy" | null>("buy");
+  const [entryMode, setEntryMode] = useState<"voice" | "manual">("voice");
   const [processing, setProcessing] = useState(false);
+  const [farmId, setFarmId] = useState("");
 
   // Flow state
   const [purchaseId, setPurchaseId] = useState<string | null>(null);
@@ -67,6 +72,7 @@ export default function EmployeeRecord() {
   const reviewCardRef = useRef<HTMLDivElement>(null);
 
   const [form, setForm] = useState({
+    supplier_name: "",
     product_name: "",
     category: "",
     quantity: 1,
@@ -153,15 +159,16 @@ export default function EmployeeRecord() {
     setPurchaseId(null);
     setTranscription("");
     setProcessing(false);
-    setTransactionType(null);
-    setForm({ product_name: "", category: "", quantity: 1, unit_price: 0 });
+    setTransactionType("buy");
+    setForm({ supplier_name: "", product_name: "", category: "", quantity: 1, unit_price: 0 });
   }, [audioUrl]);
 
   const uploadM = useMutation({
     mutationFn: async () => {
       if (!audioFile) throw new Error("no audio");
       if (!transactionType) throw new Error("اختر نوع العملية: بيع أو شراء");
-      return uploadVoice(audioFile, "ar", transactionType);
+      if (!farmId) throw new Error("اختر المزرعة أولاً");
+      return uploadVoice(audioFile, "ar", transactionType, farmId);
     },
     onSuccess: (data: { purchase_id: string; processing_status?: string }) => {
       setPurchaseId(data.purchase_id);
@@ -180,6 +187,7 @@ export default function EmployeeRecord() {
               setProcessing(false);
               if (p.product_name) {
                 setForm({
+                  supplier_name: "",
                   product_name: (p.product_name as string) ?? "",
                   category: (p.category as string) ?? "",
                   quantity: typeof p.quantity === "number" ? p.quantity : 1,
@@ -217,6 +225,7 @@ export default function EmployeeRecord() {
     onSuccess: (data: { extracted: Record<string, unknown>; fallback?: boolean }) => {
       const ex = data.extracted;
       setForm({
+        supplier_name: "",
         product_name: (ex.product_name as string) ?? "",
         category: (ex.category as string) ?? "",
         quantity: (ex.quantity as number) ?? 1,
@@ -247,12 +256,78 @@ export default function EmployeeRecord() {
       const alerts = data.alerts_created ?? [];
       if (alerts.length) toast.warning(`تم إنشاء ${alerts.length} تنبيه(ات)`);
       qc.invalidateQueries({ queryKey: ["my-purchases"] });
+      qc.invalidateQueries({ queryKey: ["my-alerts"] });
       resetAll();
     },
     onError: () => toast.error("فشل التأكيد"),
   });
 
+  const createManualM = useMutation({
+    mutationFn: async () => {
+      if (!farmId) throw new Error("اختر المزرعة أولاً");
+      if (!transactionType) throw new Error("اختر نوع العملية أولاً");
+      if (!form.product_name.trim()) throw new Error("أدخل اسم المنتج");
+      if (transactionType === "buy" && !form.category.trim()) throw new Error("اختر التصنيف");
+      return createPurchase({
+        farm_id: farmId,
+        transaction_type: transactionType,
+        product_name: form.product_name,
+        category: transactionType === "buy" ? form.category || null : null,
+        quantity: Number(form.quantity),
+        unit_price: Number(form.unit_price),
+      });
+    },
+    onSuccess: () => {
+      toast.success("تم إنشاء العملية يدوياً");
+      qc.invalidateQueries({ queryKey: ["my-purchases"] });
+      qc.invalidateQueries({ queryKey: ["my-alerts"] });
+      resetAll();
+    },
+    onError: (e) => {
+      toast.error(String((e as Error)?.message ?? "فشل إنشاء العملية"));
+    },
+  });
+
   const allowed = categoriesQ.data ?? [];
+  const BUY_CATEGORY_OPTIONS = [
+    "charge_variable_electricite",
+    "charge_variable_eau",
+    "charge_variable_gaz",
+    "charge_fixe_location",
+    "achat_aliment",
+  ];
+  const SELL_PRODUCT_OPTIONS = ["nourriture", "poussins"];
+  const supplierOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const p of recentPurchasesQ.data ?? []) {
+      const v = p.supplier_name?.trim();
+      if (v) set.add(v);
+    }
+    if (form.supplier_name.trim()) set.add(form.supplier_name.trim());
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [recentPurchasesQ.data, form.supplier_name]);
+  const productOptions = useMemo(() => {
+    const set = new Set<string>();
+    if (transactionType === "sell") {
+      SELL_PRODUCT_OPTIONS.forEach((v) => set.add(v));
+    } else {
+      for (const p of recentPurchasesQ.data ?? []) {
+        const v = p.product_name?.trim();
+        if (v) set.add(v);
+      }
+      set.add("nourriture");
+    }
+    if (form.product_name.trim()) set.add(form.product_name.trim());
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [recentPurchasesQ.data, form.product_name, transactionType]);
+  const categoryOptions = useMemo(() => {
+    if (transactionType !== "buy") return [];
+    const set = new Set<string>([...BUY_CATEGORY_OPTIONS, ...allowed]);
+    if (form.category.trim()) set.add(form.category.trim());
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [transactionType, allowed, form.category]);
+  const farmName = useMemo(() => (farmsQ.data ?? []).find((f) => f.id === farmId)?.name ?? null, [farmsQ.data, farmId]);
+  const canRunVoice = !!transactionType && !!farmId && !processing;
 
   const steps = [
     { key: "record", label: "تسجيل", done: !!audioFile, active: !audioFile },
@@ -273,169 +348,204 @@ export default function EmployeeRecord() {
   }
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        title="تسجيل عملية بالصوت"
-        subtitle="تسجيل → رفع → استخراج → تأكيد"
-        actions={
-          <Button variant="outline" className="rounded-xl" onClick={resetAll}>
-            إعادة تعيين
-          </Button>
-        }
-      />
+    <EmployeePage className="space-y-8 pb-6">
+      <div className="text-right rounded-xl border border-emerald-100/70 bg-gradient-to-l from-emerald-50/70 to-white p-5">
+        <div className="inline-flex items-center rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-800 mb-3">
+          واجهة حديثة • Smart workflow
+        </div>
+        <h2 className="text-2xl font-bold text-emerald-900">تسجيل عملية جديدة</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          قم بتوثيق النشاط الزراعي الحالي باستخدام الصوت أو الإدخال اليدوي لضمان دقة البيانات.
+        </p>
+      </div>
 
-      <Stepper steps={steps} className="mb-2" />
-
-      {/* Part 3: Transaction type — choose before recording */}
-      <Card>
-        <CardContent className="p-5 space-y-4">
-          <div className="space-y-2">
-            <Label className="text-base">نوع العملية</Label>
-            <div className="flex gap-3 flex-wrap">
-              <Button
-                type="button"
-                variant={transactionType === "sell" ? "default" : "outline"}
-                className="rounded-xl"
-                onClick={() => setTransactionType("sell")}
-              >
-                بيع
-              </Button>
-              <Button
-                type="button"
-                variant={transactionType === "buy" ? "default" : "outline"}
-                className="rounded-xl"
-                onClick={() => setTransactionType("buy")}
-              >
-                شراء
-              </Button>
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+        <div className="lg:col-span-4 space-y-5">
+          <div className="rounded-xl border border-border/60 bg-card p-5 shadow-sm transition-all hover:shadow-md">
+            <div className="flex items-center justify-between mb-3">
+              <span className="rounded-full bg-emerald-100 text-emerald-800 px-2 py-1 text-xs font-semibold">نشط الآن</span>
+              <Badge variant="secondary">{recording ? "REC" : "جاهز"}</Badge>
             </div>
-            <p className="text-xs text-muted-foreground">
-              اختر بيع أو شراء قبل بدء التسجيل.
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Recorder */}
-      <Card>
-        <CardContent className="p-5 space-y-4">
-          {processing && (
-            <div className="flex items-center gap-2 rounded-xl bg-primary/10 border border-primary/20 p-3 text-primary">
-              <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-              <span>جارٍ معالجة التسجيل...</span>
-            </div>
-          )}
-
-          <div className="flex items-center justify-between">
-            <div className="space-y-1">
-              <div className="font-medium">المسجّل</div>
-              <div className="text-sm text-muted-foreground">
-                {recording ? "جاري التسجيل..." : transactionType ? "جاهز" : "اختر نوع العملية أولاً"}
+            <h3 className="font-semibold text-foreground mb-3">وضع التسجيل</h3>
+            <div className="rounded-lg bg-muted/40 p-3 flex items-center gap-3">
+              <div className="h-11 w-11 rounded-full bg-emerald-900 text-white flex items-center justify-center">🎙️</div>
+              <div>
+                <p className="text-sm font-semibold text-emerald-900">{entryMode === "voice" ? "تسجيل صوتي ذكي" : "إدخال يدوي"}</p>
+                <p className="text-xs text-muted-foreground">{processing ? "جاري معالجة اللغة الطبيعية" : "جاهز لبدء العملية"}</p>
               </div>
             </div>
-            <Badge variant={recording ? "destructive" : "secondary"}>
-              {recording ? "REC" : "STOP"}
-            </Badge>
           </div>
 
-          {permissionError && (
-            <div className="text-sm text-destructive bg-destructive/10 p-3 rounded-xl border border-destructive/20">
-              {permissionError}
-            </div>
-          )}
+          <div className="rounded-xl border border-border/60 bg-card p-5 shadow-sm space-y-3 transition-all hover:shadow-md">
+            <h3 className="font-semibold text-foreground">تفاصيل بيئة العمل</h3>
+            <div className="text-sm flex justify-between"><span className="text-muted-foreground">الموقع الحالي</span><span className="font-semibold">{farmName ?? "غير محددة"}</span></div>
+            <div className="text-sm flex justify-between"><span className="text-muted-foreground">نوع العملية</span><span className="font-semibold">{transactionType === "sell" ? "بيع" : "شراء"}</span></div>
+            <div className="text-sm flex justify-between"><span className="text-muted-foreground">الوضع</span><span className="font-semibold">{entryMode === "voice" ? "صوتي" : "يدوي"}</span></div>
+          </div>
+        </div>
 
-          <div className="flex items-center gap-3 flex-wrap">
-            <div className="text-sm text-muted-foreground">
-              المدة: <b>{msToTime(elapsedMs)}</b>
-            </div>
-
-            {!recording ? (
-              <Button
-                className="rounded-xl"
-                onClick={startRecording}
-                disabled={!transactionType || processing}
+        <div className="lg:col-span-8">
+          <div className="rounded-xl border border-border/60 bg-card p-8 shadow-sm text-center relative overflow-hidden transition-all hover:shadow-md">
+            <div className="pointer-events-none absolute -top-16 -right-16 h-48 w-48 rounded-full bg-emerald-200/30 blur-3xl" />
+            <div className="pointer-events-none absolute -bottom-16 -left-16 h-48 w-48 rounded-full bg-emerald-900/10 blur-3xl" />
+            <div className="relative space-y-4">
+              <div className="mx-auto flex items-end gap-1 h-10 justify-center">
+                {[4, 8, 12, 6, 10, 12, 8, 4].map((h, idx) => (
+                  <div key={idx} className="w-1 rounded-full bg-emerald-500/60" style={{ height: `${h * 4}px` }} />
+                ))}
+              </div>
+              <button
+                type="button"
+                className="mx-auto h-28 w-28 rounded-full bg-emerald-800 text-white flex items-center justify-center shadow-lg transition-transform active:scale-95"
+                onClick={() => {
+                  if (entryMode !== "voice") return;
+                  if (!recording) void startRecording();
+                  else stopRecording();
+                }}
+                disabled={entryMode !== "voice" || (!recording && !canRunVoice)}
               >
-                ابدأ التسجيل
-              </Button>
-            ) : (
-              <Button className="rounded-xl" variant="destructive" onClick={stopRecording}>
-                إيقاف
-              </Button>
-            )}
-
-            <Button
-              className="rounded-xl"
-              onClick={() => uploadM.mutate()}
-              disabled={!audioFile || uploadM.isPending || processing}
-            >
-              {uploadM.isPending ? "جاري الرفع..." : "إرسال التسجيل"}
-            </Button>
-
-            <Button
-              variant="outline"
-              className="rounded-xl"
-              onClick={() => extractM.mutate()}
-              disabled={!purchaseId || extractM.isPending}
-            >
-              {extractM.isPending ? "جاري الاستخراج..." : "استخراج"}
-            </Button>
+                <span className="text-4xl">🎤</span>
+              </button>
+              <h3 className="text-xl font-semibold text-foreground">{recording ? "جاري التسجيل..." : "اضغط للبدء"}</h3>
+              <p className="text-sm text-muted-foreground max-w-xl mx-auto">
+                تحدث بشكل طبيعي لوصف العملية الزراعية أو استخدم الإدخال اليدوي حسب حاجتك.
+              </p>
+              <div className="text-sm text-muted-foreground">المدة: <b>{msToTime(elapsedMs)}</b></div>
+              <div className="flex flex-wrap justify-center gap-2">
+                <span className="rounded-full border border-border bg-muted/40 px-3 py-1 text-xs">UX Moderne</span>
+                <span className="rounded-full border border-border bg-muted/40 px-3 py-1 text-xs">RTL Ready</span>
+                <span className="rounded-full border border-border bg-muted/40 px-3 py-1 text-xs">Voice + Manual</span>
+              </div>
+              <div className="flex gap-3 justify-center flex-wrap">
+                {entryMode === "voice" ? (
+                  <Button
+                    className="rounded-xl min-w-36"
+                    onClick={() => uploadM.mutate()}
+                    disabled={!audioFile || !farmId || uploadM.isPending || processing}
+                  >
+                    {uploadM.isPending ? "جاري الرفع..." : "إرسال التسجيل"}
+                  </Button>
+                ) : null}
+                <Button variant={entryMode === "manual" ? "default" : "outline"} className="rounded-xl" onClick={() => setEntryMode("manual")}>
+                  إدخال يدوي
+                </Button>
+                <Button variant={entryMode === "voice" ? "default" : "outline"} className="rounded-xl" onClick={() => setEntryMode("voice")}>
+                  تسجيل صوتي
+                </Button>
+                <Button variant="outline" className="rounded-xl" onClick={resetAll}>إعادة تعيين</Button>
+              </div>
+              {processing ? (
+                <div className="flex items-center justify-center gap-2 rounded-xl bg-primary/10 border border-primary/20 p-3 text-primary">
+                  <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                  <span>جارٍ معالجة التسجيل...</span>
+                </div>
+              ) : null}
+            </div>
           </div>
+        </div>
+      </div>
 
-          {audioUrl && (
-            <div className="space-y-2">
-              <div className="text-sm text-muted-foreground">معاينة التسجيل:</div>
-              <audio controls src={audioUrl} className="w-full" />
+      {entryMode === "voice" ? (
+        <div className="rounded-xl border border-border/60 bg-card p-5 shadow-sm">
+          <Stepper steps={steps} className="mb-2" />
+        </div>
+      ) : null}
+
+      <EmployeeSectionCard title="إعداد العملية" subtitle="اختر المزرعة ونوع العملية قبل المتابعة" className="transition-shadow hover:shadow-md border-emerald-100/60">
+        <div className="space-y-4">
+          <Label className="text-base">المزرعة</Label>
+          <select
+            className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm"
+            value={farmId}
+            onChange={(e) => setFarmId(e.target.value)}
+          >
+            <option value="">اختر المزرعة</option>
+            {(farmsQ.data ?? []).map((f) => (
+              <option key={f.id} value={f.id}>
+                {f.name}
+              </option>
+            ))}
+          </select>
+          <Label className="text-base">نوع العملية</Label>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Button type="button" variant={transactionType === "sell" ? "default" : "outline"} className="rounded-xl justify-start" onClick={() => setTransactionType("sell")}>بيع</Button>
+            <Button type="button" variant={transactionType === "buy" ? "default" : "outline"} className="rounded-xl justify-start" onClick={() => setTransactionType("buy")}>شراء</Button>
+          </div>
+          {entryMode === "voice" ? (
+            <div className="flex items-center gap-3 flex-wrap">
+              <Button variant="outline" className="rounded-xl" onClick={() => extractM.mutate()} disabled={!purchaseId || extractM.isPending}>
+                {extractM.isPending ? "جاري الاستخراج..." : "استخراج"}
+              </Button>
+              {permissionError ? <div className="text-sm text-destructive">{permissionError}</div> : null}
             </div>
-          )}
+          ) : null}
+          {audioUrl ? <audio controls src={audioUrl} className="w-full" /> : null}
+          {purchaseId ? <div className="text-sm text-muted-foreground">رقم العملية: <b>{purchaseId}</b></div> : null}
+          {transcription ? <div className="text-sm bg-muted p-3 rounded-xl whitespace-pre-wrap"><b>النص المستخرج:</b> {transcription}</div> : null}
+        </div>
+      </EmployeeSectionCard>
 
-          {purchaseId && (
-            <div className="text-sm text-muted-foreground">
-              رقم العملية: <b>{purchaseId}</b>
-            </div>
-          )}
-
-          {transcription && (
-            <div className="text-sm bg-muted p-3 rounded-xl whitespace-pre-wrap">
-              <b>النص المستخرج:</b> {transcription}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Review + Confirm — Part 3: ref for auto-scroll when ready */}
-      <Card ref={reviewCardRef}>
-        <CardContent className="p-5 space-y-4">
+      <div ref={reviewCardRef}>
+        <EmployeeSectionCard
+          title={entryMode === "manual" && !purchaseId ? "إدخال يدوي" : "مراجعة وتأكيد"}
+          subtitle="تحقق من الحقول قبل تأكيد العملية"
+          className="transition-shadow hover:shadow-md border-emerald-100/60"
+        >
           <div className="font-medium">مراجعة البيانات</div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
+              <Label>المورد</Label>
+              <Input
+                list="suppliers"
+                value={form.supplier_name}
+                onChange={(e) => setForm({ ...form, supplier_name: e.target.value })}
+                className="rounded-xl"
+                placeholder="اختر أو اكتب المورد"
+              />
+              <datalist id="suppliers">
+                {supplierOptions.map((s) => (
+                  <option key={s} value={s} />
+                ))}
+              </datalist>
+            </div>
+
+            <div className="space-y-2">
               <Label>المنتج</Label>
               <Input
+                list="products"
                 value={form.product_name}
                 onChange={(e) => setForm({ ...form, product_name: e.target.value })}
                 className="rounded-xl"
                 placeholder="مثال: بيع دجاج"
               />
-            </div>
-
-            <div className="space-y-2">
-              <Label>التصنيف</Label>
-              <Input
-                list="cats"
-                value={form.category}
-                onChange={(e) => setForm({ ...form, category: e.target.value })}
-                className="rounded-xl"
-                placeholder="اختَر تصنيف"
-              />
-              <datalist id="cats">
-                {allowed.map((c) => (
-                  <option key={c} value={c} />
+              <datalist id="products">
+                {productOptions.map((p) => (
+                  <option key={p} value={p} />
                 ))}
               </datalist>
-              <div className="text-xs text-muted-foreground">
-                التصنيفات المسموحة تأتي من سياسات الأدمن.
-              </div>
             </div>
+
+            {transactionType === "buy" ? (
+              <div className="space-y-2">
+                <Label>التصنيف</Label>
+                <Input
+                  list="cats-buy"
+                  value={form.category}
+                  onChange={(e) => setForm({ ...form, category: e.target.value })}
+                  className="rounded-xl"
+                  placeholder="اختَر تصنيف"
+                />
+                <datalist id="cats-buy">
+                  {categoryOptions.map((c) => (
+                    <option key={c} value={c} />
+                  ))}
+                </datalist>
+                <div className="text-xs text-muted-foreground">
+                  التصنيفات المسموحة تأتي من سياسات الأدمن.
+                </div>
+              </div>
+            ) : null}
 
             <div className="space-y-2">
               <Label>الكمية</Label>
@@ -463,16 +573,51 @@ export default function EmployeeRecord() {
           <div className="text-sm text-muted-foreground">
             الإجمالي: <b>{total}</b>
           </div>
+          <div className="space-y-2">
+            <Label>الإجمالي</Label>
+            <Input value={String(total)} readOnly className="rounded-xl bg-muted/40" />
+          </div>
 
-          <Button
-            className="rounded-xl"
-            onClick={() => confirmM.mutate()}
-            disabled={!purchaseId || confirmM.isPending}
-          >
-            {confirmM.isPending ? "جاري التأكيد..." : "تأكيد العملية"}
+          <Button className="rounded-xl" onClick={() => (purchaseId ? confirmM.mutate() : createManualM.mutate())} disabled={confirmM.isPending || createManualM.isPending}>
+            {purchaseId
+              ? confirmM.isPending
+                ? "جاري التأكيد..."
+                : "تأكيد العملية"
+              : createManualM.isPending
+              ? "جاري الحفظ..."
+              : "حفظ العملية يدوياً"}
           </Button>
-        </CardContent>
-      </Card>
-    </div>
+          {purchaseId ? (
+            <Button variant="outline" className="rounded-xl mt-2" onClick={resetAll}>
+              إعادة المحاولة
+            </Button>
+          ) : null}
+        </EmployeeSectionCard>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+        <div className="rounded-xl bg-emerald-900 p-4 text-white flex items-center justify-between">
+          <div>
+            <p className="text-xs text-emerald-200">العمليات اليوم</p>
+            <p className="text-xl font-bold">{recentPurchasesQ.data?.length ?? 0}</p>
+          </div>
+          <span className="text-2xl opacity-70">📊</span>
+        </div>
+        <div className="rounded-xl border border-border/60 bg-card p-4 shadow-sm flex items-center justify-between">
+          <div>
+            <p className="text-xs text-muted-foreground">إجمالي العملية الحالية</p>
+            <p className="text-xl font-bold text-emerald-900">{total}</p>
+          </div>
+          <span className="text-2xl">💰</span>
+        </div>
+        <div className="rounded-xl border border-border/60 bg-card p-4 shadow-sm flex items-center justify-between">
+          <div>
+            <p className="text-xs text-muted-foreground">جاهزية الاستخراج</p>
+            <p className="text-xl font-bold text-emerald-900">{purchaseId ? "مرتفعة" : "بانتظار الإدخال"}</p>
+          </div>
+          <span className="text-2xl">✅</span>
+        </div>
+      </div>
+    </EmployeePage>
   );
 }

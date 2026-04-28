@@ -30,7 +30,7 @@ export default function Login() {
       await queryClient.invalidateQueries({ queryKey: ["me"] });
       const me = await fetchMe();
       if (me.role === "employee") {
-        nav("/employee/record");
+        nav("/employee/home");
       } else {
         nav("/stats");
       }

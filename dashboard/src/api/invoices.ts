@@ -14,6 +14,8 @@ export type InvoiceListItem = {
   employee_email: string;
   invoice_number: string | null;
   supplier_name: string | null;
+  transaction_type?: "buy" | "sell" | null;
+  source?: "scan" | "voice" | "manual" | null;
   total_ttc: number | null;
   status: string;
   created_at: string;
@@ -21,11 +23,13 @@ export type InvoiceListItem = {
 
 export async function scanInvoice(
   image: File,
-  transactionType: "sell" | "buy"
+  transactionType: "sell" | "buy",
+  farmId?: string
 ): Promise<{ invoice_id: string; status: string }> {
   const fd = new FormData();
   fd.append("image", image);
   fd.append("transaction_type", transactionType);
+  if (farmId) fd.append("farm_id", farmId);
   const res = await api.post("/invoices/scan", fd, {
     headers: { "Content-Type": "multipart/form-data" },
   });
@@ -82,6 +86,19 @@ export async function getInvoicePreview(id: string): Promise<InvoicePreview> {
   return res.data;
 }
 
+export async function retryInvoiceExtraction(id: string): Promise<{ invoice_id: string; status: string }> {
+  const res = await api.post(`/invoices/${id}/retry`);
+  return res.data;
+}
+
+export async function applyInvoiceCorrections(
+  id: string,
+  patch: Record<string, unknown>
+): Promise<InvoicePreview> {
+  const res = await api.post(`/invoices/${id}/apply_corrections`, { patch });
+  return res.data;
+}
+
 export async function approveInvoice(id: string): Promise<{ invoice_id: string; status: string; purchase_id: string }> {
   const res = await api.post(`/invoices/${id}/approve`);
   return res.data;
@@ -97,5 +114,13 @@ export async function listInvoices(params?: {
   limit?: number;
 }): Promise<InvoiceListItem[]> {
   const res = await api.get("/invoices", { params });
+  return res.data;
+}
+
+export async function listMyInvoices(params?: {
+  status?: string;
+  limit?: number;
+}): Promise<InvoiceListItem[]> {
+  const res = await api.get("/invoices/me", { params });
   return res.data;
 }

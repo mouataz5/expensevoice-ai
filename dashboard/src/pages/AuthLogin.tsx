@@ -29,7 +29,7 @@ export default function AuthLogin() {
       setToken(res.data.access_token);
       await queryClient.invalidateQueries({ queryKey: ["me"] });
       const me = await fetchMe();
-      if (me.role === "employee") nav("/employee/record");
+      if (me.role === "employee") nav("/employee/home");
       else nav("/stats");
     } catch (err: unknown) {
       const axErr = err as { response?: { data?: { detail?: string } } };
