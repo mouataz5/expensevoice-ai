@@ -92,6 +92,11 @@ def normalize_tunisian_invoice_amount(value: str | None) -> float | None:
     return None
 
 
+def parse_tunisian_number(value: str | None) -> float | None:
+    """Alias: same semantics as `normalize_tunisian_invoice_amount`."""
+    return normalize_tunisian_invoice_amount(value)
+
+
 def normalize_number_like_string(s: str) -> str:
     """Normalise une chaîne ressemblant à un montant pour affichage / LLM hint."""
     t = (s or "").strip().replace("\u00a0", " ")
