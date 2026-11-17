@@ -1,18 +1,19 @@
-from typing import Literal, Optional
+from typing import Optional
 
 from pydantic import BaseModel, Field
 
-Category = Literal[
-    "vente_poulet", "achat_aliment", "materiel", "transport", "autre"
-]
+# Categories are not hard-coded here: the active "categories" policy is the source
+# of truth, and the LLM's JSON schema enum is built from it at request time
+# (see app.services.extraction.build_extraction_schema). Hard-coding a separate
+# list here once let the model and the policy drift apart.
 
 
 class ExtractedPurchase(BaseModel):
     product_name: str = Field(
         ..., description="Produit/service vendu/acheté"
     )
-    category: Category = Field(
-        ..., description="Catégorie normalisée"
+    category: str = Field(
+        ..., min_length=1, description="Category from the active policy"
     )
     quantity: int = Field(..., ge=1)
     unit_price: float = Field(..., ge=0)

@@ -322,7 +322,9 @@ export default function EmployeeRecord() {
   }, [recentPurchasesQ.data, form.product_name, transactionType]);
   const categoryOptions = useMemo(() => {
     if (transactionType !== "buy") return [];
-    const set = new Set<string>([...BUY_CATEGORY_OPTIONS, ...allowed]);
+    // The active categories policy is the source of truth: the backend rejects any
+    // other category on confirm. The built-in list is only a fallback with no policy.
+    const set = new Set<string>(allowed.length > 0 ? allowed : BUY_CATEGORY_OPTIONS);
     if (form.category.trim()) set.add(form.category.trim());
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [transactionType, allowed, form.category]);

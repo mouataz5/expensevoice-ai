@@ -13,7 +13,9 @@ from app.models.purchase import Purchase
 from app.models.user import User
 from app.services.audit import audit_log
 from app.services.extraction import extract_purchase_fields, validate_and_sanitize
-from app.services.rules import get_allowed_categories
+from app.agent.output_parsing import ExtractionOutputError
+from app.agent.quality_gate import evaluate_extraction
+from app.services.rules import _get_policy, get_allowed_categories
 
 router = APIRouter(prefix="/purchases", tags=["llm-extraction"])
 logger = logging.getLogger(__name__)
@@ -46,13 +48,24 @@ async def extract_from_transcription(
             detail="No transcription found on this purchase",
         )
 
+    allowed = get_allowed_categories(db)
     try:
         extracted = await extract_purchase_fields(
             purchase.transcription,
             transaction_type=purchase.transaction_type,
+            allowed_categories=allowed,
         )
-    except (httpx.ConnectError, httpx.ConnectTimeout, Exception) as e:
-        logger.warning("LLM extraction failed for purchase %s, using defaults: %s", purchase_id, e)
+    except Exception as e:
+        reason = e.reason if isinstance(e, ExtractionOutputError) else (
+            "provider_error" if isinstance(e, (httpx.HTTPError, RuntimeError)) else "unexpected_error"
+        )
+        gate = evaluate_extraction(
+            transcript=purchase.transcription,
+            extracted=None,
+            stt_confidence=None,
+            extraction_error=reason,
+        )
+        logger.warning("LLM extraction failed for purchase %s (%s), manual entry: %s", purchase_id, reason, e)
         # Fallback: set defaults so user can review and confirm manually
         purchase.product_name = "(from_voice)"
         purchase.category = None
@@ -72,7 +85,8 @@ async def extract_from_transcription(
             action="purchase_extract_fallback",
             entity_type="purchase",
             entity_id=str(purchase.id),
-            message="LLM unreachable; defaults set for manual review",
+            message="Extraction failed; defaults set for manual entry",
+            metadata=gate.model_dump(),
         )
         return {
             "purchase_id": str(purchase.id),
@@ -87,10 +101,19 @@ async def extract_from_transcription(
             "status": purchase.status,
             "extraction_confidence": 0.0,
             "fallback": True,
+            "quality_gate": gate.model_dump(),
         }
 
-    allowed = get_allowed_categories(db)
+    limits = _get_policy(db, "limits")
+    gate = evaluate_extraction(
+        transcript=purchase.transcription,
+        extracted=extracted,
+        stt_confidence=float(purchase.stt_confidence) if purchase.stt_confidence is not None else None,
+        max_per_purchase=float(limits.get("max_per_purchase", 0) or 0),
+    )
     qty, price, total, ext_conf = validate_and_sanitize(extracted, allowed)
+    if gate.route != "ready":
+        ext_conf = min(ext_conf, 0.6)
 
     purchase.product_name = extracted.product_name or "(from_voice)"
     purchase.category = extracted.category
@@ -116,6 +139,7 @@ async def extract_from_transcription(
         metadata={
             "confidence": ext_conf,
             "category": extracted.category,
+            "quality_gate": gate.model_dump(),
         },
     )
 
@@ -124,4 +148,5 @@ async def extract_from_transcription(
         "extracted": extracted.model_dump(),
         "status": purchase.status,
         "extraction_confidence": ext_conf,
+        "quality_gate": gate.model_dump(),
     }

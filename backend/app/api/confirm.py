@@ -13,7 +13,8 @@ from app.models.policy import Policy
 from app.models.user import User
 from app.schemas.purchase import PurchaseConfirm
 from app.services.audit import audit_log
-from app.services.rules import evaluate_rules_and_create_alerts, get_allowed_categories
+from app.agent.approval import approval_requirement
+from app.services.rules import _get_policy, evaluate_rules_and_create_alerts, get_allowed_categories
 
 router = APIRouter(prefix="/purchases", tags=["confirm"])
 
@@ -63,9 +64,18 @@ def confirm_purchase(
     purchase.quantity = qty
     purchase.unit_price = unit
     purchase.total_amount = server_total
-    workflow = _approval_workflow(db)
-    require_admin_approval = bool(workflow.get("require_admin_approval", True))
-    purchase.status = "pending_approval" if require_admin_approval else "approved"
+    # A director may switch manager approval off for routine purchases, but a
+    # purchase that breaks a spending rule still goes to a manager.
+    requirement = approval_requirement(
+        workflow_rule=_approval_workflow(db),
+        limits_rule=_get_policy(db, "limits"),
+        total_amount=server_total,
+        from_voice=bool(purchase.transcription),
+        extraction_confidence=(
+            float(purchase.extraction_confidence) if purchase.extraction_confidence is not None else None
+        ),
+    )
+    purchase.status = "pending_approval" if requirement.requires_approval else "approved"
     if getattr(purchase, "processing_status", None):
         purchase.processing_status = "confirmed"
 
@@ -79,11 +89,16 @@ def confirm_purchase(
         action="purchase_submitted",
         entity_type="purchase",
         entity_id=str(purchase.id),
-        message="Purchase submitted for admin approval",
+        message=(
+            "Purchase submitted for admin approval"
+            if requirement.requires_approval
+            else "Routine purchase auto-approved by policy"
+        ),
         metadata={
             "total_amount": float(purchase.total_amount),
             "category": purchase.category,
             "product_name": purchase.product_name,
+            "approval_reasons": requirement.reasons,
         },
     )
 
@@ -93,6 +108,7 @@ def confirm_purchase(
         "purchase_id": str(purchase.id),
         "status": purchase.status,
         "total_amount": float(purchase.total_amount),
+        "approval_reasons": requirement.reasons,
         "alerts_created": [
             {"type": a.alert_type, "severity": a.severity, "message": a.message}
             for a in alerts

@@ -27,6 +27,7 @@ import {
 } from "../../src/api/purchases";
 import { queryKeys } from "../../src/queryKeys";
 import { listFarms } from "../../src/api/farms";
+import { fetchAllowedCategories } from "../../src/api/categories-public";
 import Toast from "react-native-toast-message";
 import {
   useAudioRecorder,
@@ -177,7 +178,7 @@ export default function RecordScreen() {
   const recorderState = useAudioRecorderState(recorder, 150);
   const isRecording = recorderState.isRecording;
   const metering = recorderState.metering;
-  const durationMs = recorderState.durationMs ?? 0;
+  const durationMs = recorderState.durationMillis ?? 0;
 
   const [uploading, setUploading] = useState(false);
   const [polling, setPolling] = useState(false);
@@ -215,6 +216,13 @@ export default function RecordScreen() {
       charge_variable_eau: "Facture d'eau",
       charge_variable_gaz: "Facture de gaz",
       charge_fixe_location: "Location",
+      charge_fixe_salaires: "Salaires",
+      charge_fixe_abonnement: "Abonnement",
+      charge_variable_medicaments: "Medicaments",
+      charge_variable_transport: "Transport",
+      charge_variable_autre: "Autre depense",
+      vente_poussins: "Vente de poussins",
+      vente_nourriture: "Vente de nourriture",
       achat_aliment: "Nourriture",
       nourriture: "Nourriture",
       poussins: "Poussins",
@@ -238,12 +246,22 @@ export default function RecordScreen() {
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [recentPurchases, review?.product_name, txType, customProductOptions]);
 
+  const { data: policyCategories = [] } = useQuery({
+    queryKey: queryKeys.allowedCategories,
+    queryFn: fetchAllowedCategories,
+  });
+
   const categoryOptions = useMemo(() => {
     if (txType === "buy") {
+      // The backend rejects categories outside the active policy on confirm, so the
+      // policy list wins; the built-in and custom options are only used without one.
+      if (policyCategories.length > 0) {
+        return [...policyCategories].sort((a, b) => a.localeCompare(b));
+      }
       return Array.from(new Set([...BUY_CATEGORY_OPTIONS, ...customCategoryOptions])).sort((a, b) => a.localeCompare(b));
     }
     return [];
-  }, [txType, customCategoryOptions]);
+  }, [txType, customCategoryOptions, policyCategories]);
 
   const supplierOptions = useMemo(() => {
     const set = new Set<string>();

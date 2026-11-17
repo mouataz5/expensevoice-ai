@@ -13,7 +13,20 @@ import { PageHeader } from "@/components/PageHeader";
 import { Skeleton } from "@/components/ui/skeleton";
 import TagInput from "@/components/TagInput";
 
-const DEFAULT_CATEGORIES = ["vente_poulet", "achat_aliment", "materiel", "transport", "autre"];
+// Shown only until the active policy loads; mirrors the backend defaults
+// (backend/app/core/policy_defaults.py).
+const DEFAULT_CATEGORIES = [
+  "vente_poussins",
+  "vente_nourriture",
+  "charge_fixe_location",
+  "charge_fixe_salaires",
+  "charge_fixe_abonnement",
+  "charge_variable_eau",
+  "charge_variable_electricite",
+  "charge_variable_medicaments",
+  "charge_variable_transport",
+  "charge_variable_autre",
+];
 
 export default function Policies() {
   const { t } = useTranslation();
