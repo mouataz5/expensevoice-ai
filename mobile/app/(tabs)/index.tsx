@@ -32,7 +32,7 @@ export default function HomeScreen() {
 
   const { data: purchases, isLoading: loadingPurchases } = useQuery({
     queryKey: queryKeys.purchasesMe,
-    queryFn: listMyPurchases,
+    queryFn: () => listMyPurchases(),
   });
   const { data: alerts, isLoading: loadingAlerts } = useQuery({
     queryKey: queryKeys.alertsMe,
@@ -45,7 +45,8 @@ export default function HomeScreen() {
   const todaySellOps = todayPurchases.filter((p) => p.transaction_type === "sell");
   const todayBuyAmount = todayBuyOps.reduce((s, p) => s + (p.total_amount ?? 0), 0);
   const todaySellAmount = todaySellOps.reduce((s, p) => s + (p.total_amount ?? 0), 0);
-  const pendingCount = purchases?.filter((p) => p.status === "ready_for_review").length ?? 0;
+  const pendingCount =
+    purchases?.filter((p) => p.processing_status === "ready_for_review" && p.status === "pending").length ?? 0;
   const alertsCount = alerts?.filter((a) => a.status !== "resolved").length ?? 0;
 
   const isLoading = loadingPurchases || loadingAlerts;

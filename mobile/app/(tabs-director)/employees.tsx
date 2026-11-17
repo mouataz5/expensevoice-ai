@@ -456,6 +456,7 @@ function UserRow({
 }
 
 const styles = StyleSheet.create({
+  centered: { flex: 1, justifyContent: "center", alignItems: "center", padding: 24 },
   container: { flex: 1, backgroundColor: colors.background },
   listHeaderPad: {
     paddingHorizontal: space.lg,

@@ -91,10 +91,25 @@ export function SecondaryButton({
   );
 }
 
-export function GhostButton({ title, onPress, disabled }: { title: string; onPress: () => void; disabled?: boolean }) {
+export function GhostButton({
+  title,
+  onPress,
+  disabled,
+  loading,
+}: {
+  title: string;
+  onPress: () => void;
+  disabled?: boolean;
+  loading?: boolean;
+}) {
   return (
-    <TouchableOpacity onPress={onPress} disabled={disabled} style={styles.ghostBtn} accessibilityRole="button">
-      <Text style={styles.ghostBtnText}>{title}</Text>
+    <TouchableOpacity
+      onPress={onPress}
+      disabled={disabled || loading}
+      style={styles.ghostBtn}
+      accessibilityRole="button"
+    >
+      {loading ? <ActivityIndicator color={colors.primary} /> : <Text style={styles.ghostBtnText}>{title}</Text>}
     </TouchableOpacity>
   );
 }
