@@ -20,57 +20,60 @@ The LLM does one narrow job: filling in fields. Everything that decides what hap
 ExpenseVoice is built as a team of **specialist agents**. Each one has a single job, a typed input and output, and a defined failure path. Model-driven agents only *propose*; deterministic agents *verify and decide*; humans *approve*. No agent can write money to the books on its own.
 
 ```mermaid
-flowchart LR
-    EMP(["👤 Employee<br/>voice note or invoice photo"])
+flowchart TB
+    EMP(["👤 Employee sends a voice note or an invoice photo"])
 
-    subgraph PERCEPTION["① Perception agents"]
-        direction TB
-        STT["🧠 Transcription agent<br/>Whisper · Groq / local"]
-        OCR["🧠 OCR agent<br/>Paddle · Tesseract · EasyOCR · Surya<br/>fallback chain + retries"]
-        VIS["🧠 Vision agent<br/>LLaVA · reads the invoice image"]
+    subgraph P["① PERCEPTION · AI reads the input"]
+        direction LR
+        STT["🧠 Transcription<br/>Whisper"]
+        OCR["🧠 OCR<br/>4 engines + fallback"]
+        VIS["🧠 Vision<br/>LLaVA"]
+        STT ~~~ OCR ~~~ VIS
     end
 
-    subgraph EXTRACTION["② Extraction agents"]
-        direction TB
-        VEX["🧠 Voice extraction agent<br/>LLM · policy-constrained JSON schema"]
-        IEX["🧠 Invoice extraction agent<br/>LLM + rule-based extractors, merged"]
-        TAB["⚙️ Table agent<br/>column geometry · OCR repair"]
+    subgraph X["② EXTRACTION · AI proposes a record"]
+        direction LR
+        VEX["🧠 Voice extraction<br/>LLM + policy schema"]
+        TAB["⚙️ Table agent<br/>column geometry"]
+        IEX["🧠 Invoice extraction<br/>LLM + rules"]
+        VEX ~~~ TAB --> IEX
     end
 
-    subgraph VERIFY["③ Verification agents"]
-        direction TB
-        VAL["⚙️ Validator<br/>strict schema · 1 repair retry"]
-        GRD["⚙️ Grounding checker<br/>every number must be spoken"]
-        MATH["⚙️ Math checker<br/>line · subtotal · tax · total"]
+    subgraph V["③ VERIFICATION · code checks the AI"]
+        direction LR
+        VAL["⚙️ Validator<br/>schema + 1 retry"]
+        GRD["⚙️ Grounding<br/>numbers were spoken?"]
+        MATH["⚙️ Math check<br/>lines = totals?"]
+        VAL --> GRD ~~~ MATH
     end
 
-    subgraph DECIDE["④ Decision agents"]
-        direction TB
-        GATE{{"⚙️ Router<br/>ready · needs_attention · manual_entry"}}
-        APPR{{"⚙️ Approval guardrail<br/>limits + policy"}}
-        MON["⚙️ Policy monitor<br/>limits · spikes · price anomalies"]
+    subgraph D["④ DECISION · code routes, humans approve"]
+        direction LR
+        GATE{{"⚙️ Router<br/>ready · check · manual"}}
+        REV(["👤 Employee<br/>confirms"])
+        APPR{{"⚙️ Approval<br/>guardrail"}}
+        MGR(["👤 Manager<br/>approves"])
+        GATE --> REV --> APPR -->|risky| MGR
     end
 
-    REV(["👤 Employee confirms"])
-    MGR(["👤 Manager approves / rejects"])
-    AUD[("📒 Audit log<br/>every decision + reason")]
+    subgraph O["⑤ OVERSIGHT"]
+        direction LR
+        MON["⚙️ Policy monitor<br/>spending alerts"]
+        AUD[("📒 Audit log<br/>every decision + reason")]
+        MON ~~~ AUD
+    end
 
-    EMP --> STT --> VEX --> VAL
-    EMP --> OCR --> TAB --> IEX
-    EMP --> VIS --> IEX
-    VAL -->|"invalid twice"| GATE
-    VAL --> GRD --> GATE
-    IEX --> MATH --> GATE
-    GATE --> REV --> APPR
-    REV --> MON
-    APPR -->|"risky"| MGR
-    GATE -.-> AUD
-    APPR -.-> AUD
-    MGR -.-> AUD
-    MON -.->|"alerts"| MGR
+    EMP --> P --> X --> V --> D --> O
+
+    classDef ai fill:#ede9fe,stroke:#7c3aed,color:#1e1b4b
+    classDef code fill:#dcfce7,stroke:#16a34a,color:#052e16
+    classDef human fill:#fef3c7,stroke:#d97706,color:#451a03
+    class STT,OCR,VIS,VEX,IEX ai
+    class TAB,VAL,GRD,MATH,GATE,APPR,MON,AUD code
+    class EMP,REV,MGR human
 ```
 
-**🧠 model-driven** (proposes) · **⚙️ deterministic** (verifies and decides) · **👤 human** (confirms and approves)
+🟪 **🧠 AI** proposes · 🟩 **⚙️ code** verifies and decides · 🟨 **👤 human** confirms and approves
 
 ### Agent roster
 
