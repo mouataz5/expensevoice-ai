@@ -15,6 +15,123 @@ The LLM does one narrow job: filling in fields. Everything that decides what hap
 
 ---
 
+## Agent architecture
+
+ExpenseVoice is built as a team of **specialist agents**. Each one has a single job, a typed input and output, and a defined failure path. Model-driven agents only *propose*; deterministic agents *verify and decide*; humans *approve*. No agent can write money to the books on its own.
+
+```mermaid
+flowchart LR
+    EMP(["👤 Employee<br/>voice note or invoice photo"])
+
+    subgraph PERCEPTION["① Perception agents"]
+        direction TB
+        STT["🧠 Transcription agent<br/>Whisper · Groq / local"]
+        OCR["🧠 OCR agent<br/>Paddle · Tesseract · EasyOCR · Surya<br/>fallback chain + retries"]
+        VIS["🧠 Vision agent<br/>LLaVA · reads the invoice image"]
+    end
+
+    subgraph EXTRACTION["② Extraction agents"]
+        direction TB
+        VEX["🧠 Voice extraction agent<br/>LLM · policy-constrained JSON schema"]
+        IEX["🧠 Invoice extraction agent<br/>LLM + rule-based extractors, merged"]
+        TAB["⚙️ Table agent<br/>column geometry · OCR repair"]
+    end
+
+    subgraph VERIFY["③ Verification agents"]
+        direction TB
+        VAL["⚙️ Validator<br/>strict schema · 1 repair retry"]
+        GRD["⚙️ Grounding checker<br/>every number must be spoken"]
+        MATH["⚙️ Math checker<br/>line · subtotal · tax · total"]
+    end
+
+    subgraph DECIDE["④ Decision agents"]
+        direction TB
+        GATE{{"⚙️ Router<br/>ready · needs_attention · manual_entry"}}
+        APPR{{"⚙️ Approval guardrail<br/>limits + policy"}}
+        MON["⚙️ Policy monitor<br/>limits · spikes · price anomalies"]
+    end
+
+    REV(["👤 Employee confirms"])
+    MGR(["👤 Manager approves / rejects"])
+    AUD[("📒 Audit log<br/>every decision + reason")]
+
+    EMP --> STT --> VEX --> VAL
+    EMP --> OCR --> TAB --> IEX
+    EMP --> VIS --> IEX
+    VAL -->|"invalid twice"| GATE
+    VAL --> GRD --> GATE
+    IEX --> MATH --> GATE
+    GATE --> REV --> APPR
+    REV --> MON
+    APPR -->|"risky"| MGR
+    GATE -.-> AUD
+    APPR -.-> AUD
+    MGR -.-> AUD
+    MON -.->|"alerts"| MGR
+```
+
+**🧠 model-driven** (proposes) · **⚙️ deterministic** (verifies and decides) · **👤 human** (confirms and approves)
+
+### Agent roster
+
+| Agent | Type | Input → output | Can change state? | When it fails | Code |
+|---|---|---|---|---|---|
+| Transcription | 🧠 Whisper | audio → text + confidence | No | → manual entry | `services/stt.py`, `services/speech/` |
+| OCR | 🧠 OCR models | image → text + word boxes | No | next engine in the chain, with retries | `services/ocr/ocr_orchestrator.py` |
+| Vision | 🧠 LLaVA (Ollama) | image → draft invoice | No | skipped; text path continues | `services/invoice_vision_extract.py` |
+| Voice extraction | 🧠 LLM | transcript → purchase JSON | No | one repair retry → manual entry | `services/extraction.py` |
+| Invoice extraction | 🧠 LLM + rules | OCR text → invoice draft | No | rule-based draft fills the gaps | `services/invoice_llm_extract.py` |
+| Table | ⚙️ code | word geometry → line items | No | no lines trusted → manual review | `services/table_understanding/` |
+| Validator | ⚙️ code | model output → typed purchase or error | No | sends the error back to the model once | `agent/output_parsing.py` |
+| Grounding checker | ⚙️ code | transcript + purchase → unspoken fields | No | flags fields for the employee | `agent/grounding.py` |
+| Math checker | ⚙️ code | invoice draft → consistency report | No | `low` status → manual review | `services/validation/` |
+| Router | ⚙️ code | all checks → route + reasons | Sets the review route | — | `agent/quality_gate.py` |
+| Approval guardrail | ⚙️ code | purchase + policy → approval required? | Sets approval status | defaults to *require approval* | `agent/approval.py` |
+| Policy monitor | ⚙️ code | confirmed purchase → alerts for directors | Creates alerts | — | `services/rules.py` |
+
+### How the agents hand off one voice purchase
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor E as 👤 Employee
+    participant W as 🧠 Transcription
+    participant X as 🧠 Voice extraction (LLM)
+    participant V as ⚙️ Validator
+    participant G as ⚙️ Grounding + Router
+    participant A as ⚙️ Approval guardrail
+    actor M as 👤 Manager
+    participant L as 📒 Audit log
+
+    E->>W: "شريت ٣٠ كيلو دواء ب ٨ دينار"
+    W->>X: transcript (confidence 0.91)
+    X->>V: {"quantity": 30, "unit_price": 8, ...}
+    alt output invalid
+        V-->>X: validator error, retry once
+        X->>V: corrected JSON
+    end
+    V->>G: typed purchase
+    G->>G: 30 and 8 found in transcript? total = 30 × 8 on the server
+    G->>L: route = ready, reasons = [all_checks_passed]
+    G->>E: draft ready, one tap to confirm
+    E->>A: confirm (240 TND)
+    A->>A: under the limit and policy allows auto-approval?
+    alt risky purchase
+        A->>M: needs approval (above_max_per_purchase)
+        M->>L: approved / rejected
+    else routine purchase
+        A->>L: auto-approved (routine_purchase)
+    end
+```
+
+### Design principles
+
+- **Propose, verify, decide.** Models propose, code verifies and decides, humans approve. An agent's power matches how far its output can be trusted.
+- **Least privilege.** No model-driven agent has tools or write access. The transcript is fenced as data, so instructions spoken in a recording cannot drive an action.
+- **Typed boundaries.** Model output is parsed into Pydantic models before any other agent uses it, so a bad handoff fails loudly at the boundary instead of leaking downstream.
+- **Every failure has a route.** Each agent's failure leads to a defined next step (retry, fallback engine, manual entry), never a silent default or a stuck purchase.
+- **Measured, not assumed.** The router is scored against the obvious baseline (trusting the model's confidence) in [Evaluation](#evaluation).
+
 ## The business problem
 
 Farm workers buy supplies all day: feed, medicine, fuel, spare parts. Paper invoices pile up, and typing each one into a system is slow and often skipped. Managers lose sight of spending until month end, and nobody can say who approved what.
